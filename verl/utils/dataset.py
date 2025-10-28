@@ -30,6 +30,7 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 
 from ..models.transformers.qwen2_vl import get_rope_index
 from . import torch_functional as VF
+from .image_text_overlay import add_text_to_image
 
 
 def collate_fn(features: list[dict[str, Any]]) -> dict[str, Any]:
@@ -106,6 +107,7 @@ class RLHFDataset(Dataset):
         format_prompt: Optional[str] = None,
         min_pixels: Optional[int] = None,
         max_pixels: Optional[int] = None,
+        enable_dual_branch: bool = False,
         filter_overlong_prompts: bool = True,
         filter_overlong_prompts_workers: int = 16,
     ):
@@ -117,6 +119,7 @@ class RLHFDataset(Dataset):
         self.video_key = video_key
         self.image_dir = image_dir
         self.video_fps = video_fps
+        self.text_overlay = enable_dual_branch
         self.max_prompt_length = max_prompt_length
         self.truncation = truncation
         self.min_pixels = min_pixels
@@ -211,72 +214,124 @@ class RLHFDataset(Dataset):
             input_ids = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True)
             return len(input_ids) <= self.max_prompt_length
 
+    def _extract_question_text(self, example: dict[str, Any], fallback_prompt: Optional[str] = None) -> str:
+        """
+        Extract clean question text for overlay
+        
+        Priority:
+        1. Use question_key field if available
+        2. Extract from fallback_prompt by removing markers
+        3. Return empty string
+        """
+        if self.prompt_key in example and example[self.prompt_key]:
+            return str(example[self.prompt_key])
+        elif fallback_prompt is not None:
+            return fallback_prompt.replace("<image>", "").replace("<video>", "").strip()
+        else:
+            return ""
+    
+    def _add_text_overlay(self, example: dict[str, Any], text: str) -> dict[str, Any]:
+        images = example.get(self.image_key, [])
+        if self.image_dir is not None and len(images) != 0 and isinstance(images[0], str):  # image paths
+            images = [os.path.join(self.image_dir, image) for image in images]
+
+        processed_images = [] if len(images) != 0 else None  # text-only data
+        for image in images:
+            # load image first
+            if isinstance(image, str):
+                pil_img = Image.open(image)
+            elif isinstance(image, dict):
+                pil_img = Image.open(BytesIO(image["bytes"]))
+            elif isinstance(image, bytes):
+                pil_img = Image.open(BytesIO(image))
+            else:
+                pil_img = image
+            pil_img.load()
+            # add text overlay
+            overlay_text_image = add_text_to_image(pil_img, f"Question: {text}")
+            processed_images.append(process_image(overlay_text_image, self.min_pixels, self.max_pixels))
+
+        return processed_images
+
+    def _apply_chat_template(self, messages):
+        if self.processor is not None:
+            return self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+        return self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+
+    def _load_and_process_media(self, example, text_overlay, prompt_text):
+        if self.image_key in example:
+            images = self._resolve_paths(example[self.image_key])
+            if text_overlay:
+                images = self._add_text_overlay(example, prompt_text)
+            processed_images = [process_image(img, self.min_pixels, self.max_pixels) for img in images]
+            return {"images": processed_images}, "image"
+
+        elif self.video_key in example:
+            videos = self._resolve_paths(example[self.video_key])
+            processed_videos = [process_video(v, self.min_pixels, self.max_pixels, self.video_fps) for v in videos]
+            return {"videos": processed_videos}, "video"
+
+        else:
+            return None, "text"
+
+    def _apply_processor(self, multimodal_inputs, prompt):
+        if self.processor is not None:
+            if multimodal_inputs and "videos" in multimodal_inputs:
+                return self.processor(videos=multimodal_inputs["videos"], text=[prompt], return_tensors="pt")
+            elif multimodal_inputs and "images" in multimodal_inputs:
+                return self.processor(multimodal_inputs["images"], [prompt], return_tensors="pt")
+        return self.tokenizer([prompt], add_special_tokens=False, return_tensors="pt")
+
+    def _build_position_ids(self, model_inputs, input_ids, attention_mask):
+        if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
+            vision_pos = get_rope_index(
+                self.processor,
+                input_ids=input_ids,
+                image_grid_thw=model_inputs.get("image_grid_thw"),
+                video_grid_thw=model_inputs.get("video_grid_thw"),
+                second_per_grid_ts=model_inputs.get("second_per_grid_ts"),
+                attention_mask=attention_mask,
+            )
+            text_pos = torch.arange(len(input_ids)).unsqueeze(0)
+            return torch.cat((text_pos, vision_pos), dim=0)
+        return torch.clip(attention_mask.cumsum(dim=0) - 1, min=0)
+
+    def _truncate_prompt(self, prompt):
+        raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
+        if len(raw_prompt_ids) > self.max_prompt_length:
+            if self.truncation == "left":
+                return raw_prompt_ids[-self.max_prompt_length:]
+            elif self.truncation == "right":
+                return raw_prompt_ids[:self.max_prompt_length]
+            elif self.truncation == "error":
+                raise RuntimeError(f"Prompt too long: {len(raw_prompt_ids)} > {self.max_prompt_length}")
+        return raw_prompt_ids
+
+    def _resolve_paths(self, items):
+        if self.image_dir and isinstance(items, list) and len(items) > 0 and isinstance(items[0], str):
+            return [os.path.join(self.image_dir, i) for i in items]
+        return items
+
     def __len__(self):
         return len(self.dataset)
 
-    def __getitem__(self, index):
-        example: dict = self.dataset[index]
-        messages = self._build_messages(example)
-        example.pop(self.prompt_key, None)
-
-        if self.image_key in example:
-            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-            images = example.pop(self.image_key)
-            if self.image_dir is not None and len(images) != 0 and isinstance(images[0], str):  # image paths
-                images = [os.path.join(self.image_dir, image) for image in images]
-
-            processed_images = [] if len(images) != 0 else None  # text-only data
-            for image in images:
-                processed_images.append(process_image(image, self.min_pixels, self.max_pixels))
-
-            model_inputs = self.processor(processed_images, [prompt], add_special_tokens=False, return_tensors="pt")
-            input_ids = model_inputs.pop("input_ids")[0]
-            attention_mask = model_inputs.pop("attention_mask")[0]
-            example["multi_modal_data"] = {"images": images}
-        elif self.video_key in example:
-            prompt = self.processor.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-            videos = example.pop(self.video_key)
-            if self.image_dir is not None and len(videos) != 0 and isinstance(videos[0], str):  # video paths
-                videos = [os.path.join(self.image_dir, video) for video in videos]
-
-            processed_videos = [] if len(videos) != 0 else None  # text-only data
-            video_fps_list = []
-            for video in videos:
-                processed_video, video_fps = process_video(
-                    video, self.min_pixels, self.max_pixels, self.video_fps, return_fps=True
-                )
-                processed_videos.append(processed_video)
-                video_fps_list.append(video_fps)
-
-            model_inputs = self.processor(
-                videos=processed_videos, text=[prompt], add_special_tokens=False, return_tensors="pt"
-            )
-            if "second_per_grid_ts" in self.processor.model_input_names:
-                model_inputs["second_per_grid_ts"] = [2.0 / video_sample_fps for video_sample_fps in video_fps_list]
-
-            input_ids = model_inputs.pop("input_ids")[0]
-            attention_mask = model_inputs.pop("attention_mask")[0]
-            example["multi_modal_data"] = {"videos": videos}
+    def _make_branch(self, example, messages, original_prompt_text, text_overlay=False):
+        if text_overlay:
+            prompt_text = "<image>\nPlease answer the question in the image."
+            messages = self._build_messages({self.prompt_key: prompt_text})
         else:
-            prompt = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-            model_inputs = self.tokenizer([prompt], add_special_tokens=False, return_tensors="pt")
-            input_ids = model_inputs.pop("input_ids")[0]
-            attention_mask = model_inputs.pop("attention_mask")[0]
+            prompt_text = original_prompt_text
 
-        if self.processor is not None and "Qwen2VLImageProcessor" in self.processor.image_processor.__class__.__name__:
-            # qwen2vl mrope
-            vision_position_ids = get_rope_index(
-                self.processor,
-                input_ids=input_ids,
-                image_grid_thw=model_inputs.get("image_grid_thw", None),
-                video_grid_thw=model_inputs.get("video_grid_thw", None),
-                second_per_grid_ts=model_inputs.get("second_per_grid_ts", None),
-                attention_mask=attention_mask,
-            )  # (3, seq_length)
-            text_position_ids = torch.arange(len(input_ids)).unsqueeze(0)  # (1, seq_length)
-            position_ids = torch.cat((text_position_ids, vision_position_ids), dim=0)  # (4, seq_length)
-        else:
-            position_ids = torch.clip(attention_mask.cumsum(dim=0) - 1, min=0, max=None)  # (seq_length,)
+        prompt = self._apply_chat_template(messages)
+
+        multimodal_inputs, multimodal_type = self._load_and_process_media(example, text_overlay, prompt_text)
+        example["multi_modal_data"] = multimodal_inputs
+
+        model_inputs = self._apply_processor(multimodal_inputs, prompt)
+        input_ids = model_inputs.pop("input_ids")[0]
+        attention_mask = model_inputs.pop("attention_mask")[0]
+
+        position_ids = self._build_position_ids(model_inputs, input_ids, attention_mask)
 
         input_ids, attention_mask, position_ids = VF.postprocess_data(
             input_ids=input_ids,
@@ -287,18 +342,31 @@ class RLHFDataset(Dataset):
             left_pad=True,
             truncation=self.truncation,
         )
-        raw_prompt_ids = self.tokenizer.encode(prompt, add_special_tokens=False)
-        if len(raw_prompt_ids) > self.max_prompt_length:
-            if self.truncation == "left":
-                raw_prompt_ids = raw_prompt_ids[-self.max_prompt_length :]
-            elif self.truncation == "right":
-                raw_prompt_ids = raw_prompt_ids[: self.max_prompt_length]
-            elif self.truncation == "error":
-                raise RuntimeError(f"Prompt length {len(raw_prompt_ids)} is longer than {self.max_prompt_length}.")
 
-        example["input_ids"] = input_ids
-        example["attention_mask"] = attention_mask
-        example["position_ids"] = position_ids
-        example["raw_prompt_ids"] = raw_prompt_ids
-        example["ground_truth"] = example.pop(self.answer_key)
-        return example
+        raw_prompt_ids = self._truncate_prompt(prompt)
+
+        example_out = dict(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            raw_prompt_ids=raw_prompt_ids,
+            ground_truth=example.pop(self.answer_key, None),
+            multi_modal_data=multimodal_inputs,
+        )
+
+        return example_out
+
+    def __getitem__(self, index):
+        example = self.dataset[index]
+        prompt_text = example.get(self.prompt_key, None)
+        messages = self._build_messages(example)
+
+        # branch A: original prompt without overlay
+        branch_A = self._make_branch(example, messages, prompt_text, text_overlay=False)
+
+        # branch B: new prompt with overlay
+        if self.text_overlay and self.image_key in example:
+            branch_B = self._make_branch(example, messages, prompt_text, text_overlay=True)
+            return branch_A, branch_B
+
+        return branch_A

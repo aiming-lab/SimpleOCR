@@ -1,5 +1,5 @@
 data:
-  train_files: /home/yibop/processed_datasets/merged/train_grpo.json
+  train_files: /home/yibop/processed_datasets/merged/train_grpo_smallset.json
   val_files: /home/yibop/processed_datasets/merged/id_test.json
   prompt_key: problem
   answer_key: answer
@@ -19,6 +19,7 @@ data:
   min_pixels: 262144
   max_pixels: 4194304
   filter_overlong_prompts: true
+  enable_dual_branch: false
 
 algorithm:
   adv_estimator: grpo
@@ -55,8 +56,8 @@ worker:
       enable_cpu_offload: false
       enable_rank0_init: true
     offload:
-      offload_params: true  # true: more CPU memory; false: more GPU memory
-      offload_optimizer: true  # true: more CPU memory; false: more GPU memory
+      offload_params: false  # true: more CPU memory; false: more GPU memory
+      offload_optimizer: false  # true: more CPU memory; false: more GPU memory
 
   rollout:
     n: 5
