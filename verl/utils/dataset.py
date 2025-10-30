@@ -34,24 +34,6 @@ from . import torch_functional as VF
 from .image_text_overlay import add_text_to_image
 
 
-# def collate_fn(features: list[dict[str, Any]]) -> dict[str, Any]:
-#     tensors = defaultdict(list)
-#     non_tensors = defaultdict(list)
-#     for feature in features:
-#         for key, value in feature.items():
-#             if isinstance(value, torch.Tensor):
-#                 tensors[key].append(value)
-#             else:
-#                 non_tensors[key].append(value)
-
-#     for key, value in tensors.items():
-#         tensors[key] = torch.stack(value, dim=0)
-
-#     for key, value in non_tensors.items():
-#         non_tensors[key] = np.array(value, dtype=object)
-
-#     return {**tensors, **non_tensors}
-
 def collate_fn(features: list[dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]]) -> Any:
     # dual branch
     if isinstance(features[0], tuple):

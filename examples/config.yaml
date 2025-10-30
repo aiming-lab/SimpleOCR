@@ -1,5 +1,5 @@
 data:
-  train_files: /home/yibop/processed_datasets/merged/train_grpo_smallset.json
+  train_files: /home/yibop/processed_datasets/merged/train_grpo.json
   val_files: /home/yibop/processed_datasets/merged/id_test.json
   prompt_key: question
   answer_key: answer
@@ -7,7 +7,7 @@ data:
   video_key: videos
   image_dir: /home/yibop/data
   video_fps: 2.0
-  max_prompt_length: 2048
+  max_prompt_length: 3072
   max_response_length: 2048
   rollout_batch_size: 512  # equivalent to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
@@ -17,10 +17,10 @@ data:
   shuffle: true
   seed: 1
   min_pixels: 262144
-  max_pixels: 4194304
+  max_pixels: 2097152 # 4194304
   filter_overlong_prompts: true
-  enable_dual_branch: true
-  branch: A
+  enable_dual_branch: false
+  branch: B
 
 algorithm:
   adv_estimator: grpo
