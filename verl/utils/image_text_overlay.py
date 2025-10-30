@@ -135,8 +135,8 @@ class ImageTextOverlay:
         if not fonts['english']:
             fonts['english'] = [None]
         
-        logger.info(f"Loaded: {len([f for f in fonts['chinese'] if f])} Chinese fonts, "
-                   f"{len([f for f in fonts['english'] if f])} English fonts")
+        # logger.info(f"Loaded: {len([f for f in fonts['chinese'] if f])} Chinese fonts, "
+        #            f"{len([f for f in fonts['english'] if f])} English fonts")
         
         return fonts
     

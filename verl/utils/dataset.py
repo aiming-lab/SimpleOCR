@@ -20,6 +20,7 @@ from typing import Any, Optional, Union
 
 import numpy as np
 import torch
+import copy
 from datasets import load_dataset
 from jinja2 import Template
 from PIL import Image
@@ -33,24 +34,58 @@ from . import torch_functional as VF
 from .image_text_overlay import add_text_to_image
 
 
-def collate_fn(features: list[dict[str, Any]]) -> dict[str, Any]:
-    tensors = defaultdict(list)
-    non_tensors = defaultdict(list)
-    for feature in features:
-        for key, value in feature.items():
+# def collate_fn(features: list[dict[str, Any]]) -> dict[str, Any]:
+#     tensors = defaultdict(list)
+#     non_tensors = defaultdict(list)
+#     for feature in features:
+#         for key, value in feature.items():
+#             if isinstance(value, torch.Tensor):
+#                 tensors[key].append(value)
+#             else:
+#                 non_tensors[key].append(value)
+
+#     for key, value in tensors.items():
+#         tensors[key] = torch.stack(value, dim=0)
+
+#     for key, value in non_tensors.items():
+#         non_tensors[key] = np.array(value, dtype=object)
+
+#     return {**tensors, **non_tensors}
+
+def collate_fn(features: list[dict[str, Any] | tuple[dict[str, Any], dict[str, Any]]]) -> Any:
+    # dual branch
+    if isinstance(features[0], tuple):
+        branch_A_list, branch_B_list = zip(*features)
+
+        def collate_branch(branch_samples):
+            tensors, non_tensors = defaultdict(list), defaultdict(list)
+            for sample in branch_samples:
+                for key, value in sample.items():
+                    if isinstance(value, torch.Tensor):
+                        tensors[key].append(value)
+                    else:
+                        non_tensors[key].append(value)
+            for key, vals in tensors.items():
+                tensors[key] = torch.stack(vals, dim=0)
+            for key, vals in non_tensors.items():
+                non_tensors[key] = np.array(vals, dtype=object)
+            return {**tensors, **non_tensors}
+
+        return collate_branch(branch_A_list), collate_branch(branch_B_list)
+
+    # single branch
+    tensors, non_tensors = defaultdict(list), defaultdict(list)
+    for sample in features:
+        for key, value in sample.items():
             if isinstance(value, torch.Tensor):
                 tensors[key].append(value)
             else:
                 non_tensors[key].append(value)
-
-    for key, value in tensors.items():
-        tensors[key] = torch.stack(value, dim=0)
-
-    for key, value in non_tensors.items():
-        non_tensors[key] = np.array(value, dtype=object)
-
+    for key, vals in tensors.items():
+        tensors[key] = torch.stack(vals, dim=0)
+    for key, vals in non_tensors.items():
+        non_tensors[key] = np.array(vals, dtype=object)
     return {**tensors, **non_tensors}
-
 
 def process_image(
     image: Union[dict[str, Any], ImageObject, str], min_pixels: Optional[int], max_pixels: Optional[int]
@@ -121,7 +156,7 @@ class RLHFDataset(Dataset):
         self.image_dir = image_dir
         self.video_fps = video_fps
         self.enable_dual_branch = enable_dual_branch
-        self.branch == branch
+        self.branch = branch
         self.max_prompt_length = max_prompt_length
         self.truncation = truncation
         self.min_pixels = min_pixels
@@ -250,7 +285,8 @@ class RLHFDataset(Dataset):
                 pil_img = image
             pil_img.load()
             # add text overlay
-            overlay_text_image = add_text_to_image(pil_img, f"Question: {text}")
+            seed = int(example.get("id", 0))
+            overlay_text_image = add_text_to_image(pil_img, f"Question: {text}", seed)
             processed_images.append(process_image(overlay_text_image, self.min_pixels, self.max_pixels))
 
         return processed_images
@@ -266,15 +302,15 @@ class RLHFDataset(Dataset):
             if text_overlay:
                 images = self._add_text_overlay(example, prompt_text)
             processed_images = [process_image(img, self.min_pixels, self.max_pixels) for img in images]
-            return {"images": processed_images}, "image"
+            return {"images": processed_images}
 
         elif self.video_key in example:
             videos = self._resolve_paths(example[self.video_key])
             processed_videos = [process_video(v, self.min_pixels, self.max_pixels, self.video_fps) for v in videos]
-            return {"videos": processed_videos}, "video"
+            return {"videos": processed_videos}
 
         else:
-            return None, "text"
+            return None
 
     def _apply_processor(self, multimodal_inputs, prompt):
         if self.processor is not None:
@@ -326,7 +362,7 @@ class RLHFDataset(Dataset):
             prompt_text = original_prompt_text
         prompt = self._apply_chat_template(messages)
 
-        multimodal_inputs, multimodal_type = self._load_and_process_media(example, text_overlay, prompt_text)
+        multimodal_inputs = self._load_and_process_media(example, text_overlay, original_prompt_text)
         example["multi_modal_data"] = multimodal_inputs
 
         model_inputs = self._apply_processor(multimodal_inputs, prompt)
@@ -348,6 +384,7 @@ class RLHFDataset(Dataset):
         raw_prompt_ids = self._truncate_prompt(prompt)
 
         example_out = dict(
+            original_prompt_text=original_prompt_text,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,
@@ -365,14 +402,23 @@ class RLHFDataset(Dataset):
 
         # branch A: original prompt without overlay text on images
         if not self.enable_dual_branch and self.branch == "A":
-            branch_A = self._make_branch(example, messages, prompt_text, text_overlay=False)
+            branch_A = self._make_branch(copy.deepcopy(example), messages, prompt_text, text_overlay=False)
+            branch_A["branch"] = "A"
+            del example
             return branch_A
         # branch B: new prompt with overlay text on images
         elif not self.enable_dual_branch and self.branch == "B":
-            branch_B = self._make_branch(example, messages, prompt_text, text_overlay=True)
+            branch_B = self._make_branch(copy.deepcopy(example), messages, prompt_text, text_overlay=True)
+            branch_B["branch"] = "B"
+            del example
             return branch_B
+        # activate dual-branch mode
         elif self.enable_dual_branch:
-            branch_B = self._make_branch(example, messages, prompt_text, text_overlay=True)
+            branch_A = self._make_branch(copy.deepcopy(example), messages, prompt_text, text_overlay=False)
+            branch_B = self._make_branch(copy.deepcopy(example), messages, prompt_text, text_overlay=True)
+            branch_A["branch"] = "A"
+            branch_B["branch"] = "B"
+            del example
             return branch_A, branch_B
         else:
             raise ValueError("Invalid branch configuration.")

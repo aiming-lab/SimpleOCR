@@ -1,5 +1,5 @@
 data:
-  train_files: /home/yibop/processed_datasets/merged/train_grpo.json
+  train_files: /home/yibop/processed_datasets/merged/train_grpo_smallset.json
   val_files: /home/yibop/processed_datasets/merged/id_test.json
   prompt_key: question
   answer_key: answer
@@ -19,8 +19,8 @@ data:
   min_pixels: 262144
   max_pixels: 4194304
   filter_overlong_prompts: true
-  enable_dual_branch: false
-  branch: B
+  enable_dual_branch: true
+  branch: A
 
 algorithm:
   adv_estimator: grpo
