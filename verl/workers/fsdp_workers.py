@@ -461,7 +461,8 @@ class FSDPWorker(Worker):
                     images, videos = [], []
                     if "images" in multi_modal_data:
                         for image in multi_modal_data["images"]:
-                            images.append(process_image(image, min_pixels, max_pixels))
+                            # images.append(process_image(image, min_pixels, max_pixels))
+                            images.append(image)
 
                     if "videos" in multi_modal_data:
                         for video in multi_modal_data["videos"]:
@@ -573,8 +574,9 @@ class FSDPWorker(Worker):
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_log_probs(self, data: DataProto):
         assert self._has_actor
-
+        # torch.save(data, "debug_data_compute_log_probs.pt")
         self._process_multi_modal_inputs(data)
+        # torch.save(data, "debug_data_compute_log_probs_after_process.pt")
         data = data.to(torch.cuda.current_device())
 
         if self._use_param_offload:
@@ -585,7 +587,11 @@ class FSDPWorker(Worker):
         # perform recompute log_prob
         with self.ulysses_sharding_manager:
             data = self.ulysses_sharding_manager.preprocess_data(data)
-            output = self.actor.compute_log_prob(data=data)
+            try:
+                output = self.actor.compute_log_prob(data=data)
+            except RuntimeError as e:
+                breakpoint()
+                raise e
             output = DataProto.from_dict(
                 tensors={"old_log_probs": output}, meta_info={"temperature": self.config.rollout.temperature}
             )

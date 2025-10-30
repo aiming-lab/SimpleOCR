@@ -556,7 +556,7 @@ class RayPPOTrainer:
                 if self.config.algorithm.online_filtering:
                     metrics.update({f"reward/{k}": v for k, v in reduce_metrics(all_metrics).items()})
 
-                return batch[: self.config.data.rollout_batch_size * self.config.worker.rollout.n]
+                return batch[: self.config.data.rollout_batch_size * self.config.worker.rollout.n], batch_dict
 
     def fit(self):
         """
@@ -590,14 +590,14 @@ class RayPPOTrainer:
                 # make a batch of data
                 with timer("gen", timing_raw):
                     self.actor_rollout_ref_wg.prepare_rollout_engine()
-                    batch = self._make_batch_data(metrics=metrics)
+                    batch, batch_dict = self._make_batch_data(metrics=metrics)
                     self.actor_rollout_ref_wg.release_rollout_engine()
-
                 # balance the number of valid tokens on each dp rank.
                 # NOTE: this breaks the order of data inside the batch.
                 # Please take care when you implement group based adv computation such as GRPO and rloo
                 self._balance_batch(batch, metrics=metrics)
-
+                # torch.save(batch_dict, "debug_before_make_batch.pt")
+                # torch.save(batch, "debug_after_make_batch.pt")
                 # compute global valid tokens
                 batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
 

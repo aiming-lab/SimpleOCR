@@ -206,7 +206,12 @@ class DataParallelPPOActor(BasePPOActor):
 
         for micro_batch in micro_batches:
             model_inputs = {**micro_batch.batch, **micro_batch.non_tensor_batch}
-            log_probs = self._forward_micro_batch(model_inputs, temperature=temperature)
+            try:
+                log_probs = self._forward_micro_batch(model_inputs, temperature=temperature)
+            except Exception as e:
+                print(f"Error in _forward_micro_batch: {e}")
+                breakpoint()
+                raise e
             log_probs_lst.append(log_probs)
 
         log_probs = torch.concat(log_probs_lst, dim=0)

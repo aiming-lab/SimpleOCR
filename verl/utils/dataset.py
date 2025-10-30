@@ -108,6 +108,7 @@ class RLHFDataset(Dataset):
         min_pixels: Optional[int] = None,
         max_pixels: Optional[int] = None,
         enable_dual_branch: bool = False,
+        branch: str = "A",
         filter_overlong_prompts: bool = True,
         filter_overlong_prompts_workers: int = 16,
     ):
@@ -119,7 +120,8 @@ class RLHFDataset(Dataset):
         self.video_key = video_key
         self.image_dir = image_dir
         self.video_fps = video_fps
-        self.text_overlay = enable_dual_branch
+        self.enable_dual_branch = enable_dual_branch
+        self.branch == branch
         self.max_prompt_length = max_prompt_length
         self.truncation = truncation
         self.min_pixels = min_pixels
@@ -318,10 +320,10 @@ class RLHFDataset(Dataset):
     def _make_branch(self, example, messages, original_prompt_text, text_overlay=False):
         if text_overlay:
             prompt_text = "<image>\nPlease answer the question in the image."
-            messages = self._build_messages({self.prompt_key: prompt_text})
+            example[self.prompt_key] = prompt_text
+            messages = self._build_messages(example)
         else:
             prompt_text = original_prompt_text
-
         prompt = self._apply_chat_template(messages)
 
         multimodal_inputs, multimodal_type = self._load_and_process_media(example, text_overlay, prompt_text)
@@ -361,12 +363,17 @@ class RLHFDataset(Dataset):
         prompt_text = example.get(self.prompt_key, None)
         messages = self._build_messages(example)
 
-        # branch A: original prompt without overlay
-        branch_A = self._make_branch(example, messages, prompt_text, text_overlay=False)
-
-        # branch B: new prompt with overlay
-        if self.text_overlay and self.image_key in example:
+        # branch A: original prompt without overlay text on images
+        if not self.enable_dual_branch and self.branch == "A":
+            branch_A = self._make_branch(example, messages, prompt_text, text_overlay=False)
+            return branch_A
+        # branch B: new prompt with overlay text on images
+        elif not self.enable_dual_branch and self.branch == "B":
+            branch_B = self._make_branch(example, messages, prompt_text, text_overlay=True)
+            return branch_B
+        elif self.enable_dual_branch:
             branch_B = self._make_branch(example, messages, prompt_text, text_overlay=True)
             return branch_A, branch_B
+        else:
+            raise ValueError("Invalid branch configuration.")
 
-        return branch_A

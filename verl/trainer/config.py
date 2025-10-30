@@ -55,6 +55,7 @@ class DataConfig:
     filter_overlong_prompts: bool = True
     filter_overlong_prompts_workers: int = 16
     enable_dual_branch: bool = False
+    branch: str = "A"
 
     def post_init(self):
         if self.image_dir is not None:

@@ -1,7 +1,7 @@
 data:
-  train_files: /home/yibop/processed_datasets/merged/train_grpo_smallset.json
+  train_files: /home/yibop/processed_datasets/merged/train_grpo.json
   val_files: /home/yibop/processed_datasets/merged/id_test.json
-  prompt_key: problem
+  prompt_key: question
   answer_key: answer
   image_key: image_path
   video_key: videos
@@ -20,6 +20,7 @@ data:
   max_pixels: 4194304
   filter_overlong_prompts: true
   enable_dual_branch: false
+  branch: B
 
 algorithm:
   adv_estimator: grpo
@@ -42,7 +43,7 @@ worker:
     dynamic_batching: true
     ulysses_size: 1
     model:
-      model_path: Qwen/Qwen2.5-7B-Instruct
+      model_path: Qwen/Qwen2.5-VL-7B-Instruct
       enable_gradient_checkpointing: true
       trust_remote_code: false
       freeze_vision_tower: false
@@ -97,7 +98,7 @@ trainer:
   n_gpus_per_node: 8
   max_try_make_batch: 20  # -1 means no limit
   val_freq: 5  # -1 to disable
-  val_before_train: true
+  val_before_train: false
   val_only: false
   val_generations_to_log: 3
   save_freq: 5  # -1 to disable
