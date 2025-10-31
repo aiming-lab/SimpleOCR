@@ -60,7 +60,6 @@ from .rollout import vLLMRollout
 from .sharding_manager import FSDPVLLMShardingManager
 from .sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 
-
 class FSDPWorker(Worker):
     def __init__(
         self,
@@ -440,55 +439,7 @@ class FSDPWorker(Worker):
 
         if self._use_optimizer_offload:  # avoid OOM in resuming
             offload_fsdp_optimizer(self.optimizer)
-
-    # def _process_multi_modal_inputs(self, data: DataProto):
-    #     if "multi_modal_data" not in data.non_tensor_batch:
-    #         return
-
-    #     if "uid" in self._cache and not np.all(data.non_tensor_batch["uid"] == self._cache["uid"]):
-    #         self._cache.clear()
-
-    #     if "multi_modal_inputs" not in self._cache:
-    #         min_pixels = data.meta_info["min_pixels"]
-    #         max_pixels = data.meta_info["max_pixels"]
-    #         video_fps = data.meta_info["video_fps"]
-    #         batch_multi_modal_inputs = []
-    #         multi_modal_inputs_cache = {}  # avoid repeated processing for n > 1 samples
-    #         for index, multi_modal_data in zip(
-    #             data.non_tensor_batch["uid"], data.non_tensor_batch["multi_modal_data"]
-    #         ):  # process multi modal data per sample
-    #             if index not in multi_modal_inputs_cache:
-    #                 images, videos = [], []
-    #                 if "images" in multi_modal_data:
-    #                     for image in multi_modal_data["images"]:
-    #                         # images.append(process_image(image, min_pixels, max_pixels))
-    #                         images.append(image)
-
-    #                 if "videos" in multi_modal_data:
-    #                     for video in multi_modal_data["videos"]:
-    #                         videos.append(process_video(video, min_pixels, max_pixels, video_fps))
-
-    #                 if len(images) != 0:
-    #                     # it's necessary to add `dict` to properly convert batch features to dict
-    #                     # otherwise the batch features will be converted to dict keys
-    #                     # see https://github.com/hiyouga/EasyR1/pull/339
-    #                     multi_modal_inputs = dict(self.processor.image_processor(images=images, return_tensors="pt"))
-    #                 elif len(videos) != 0:
-    #                     multi_modal_inputs = dict(
-    #                         self.processor.image_processor(images=None, videos=videos, return_tensors="pt")
-    #                     )
-    #                 else:
-    #                     multi_modal_inputs = {}
-
-    #                 multi_modal_inputs_cache[index] = multi_modal_inputs
-
-    #             batch_multi_modal_inputs.append(multi_modal_inputs_cache[index])
-
-    #         self._cache["uid"] = data.non_tensor_batch["uid"]
-    #         self._cache["multi_modal_inputs"] = np.array(batch_multi_modal_inputs, dtype=object)
-
-    #     data.non_tensor_batch["multi_modal_inputs"] = self._cache["multi_modal_inputs"]
-
+    
     def _process_multi_modal_inputs(self, data: DataProto):
         if "multi_modal_data" not in data.non_tensor_batch:
             return
@@ -497,8 +448,13 @@ class FSDPWorker(Worker):
         branches = np.array(data.non_tensor_batch.get("branch", ["A"] * len(uids)), dtype=object)
         branch_keys = np.char.add(uids, "_" + branches)
 
-        if "uid_branch" in self._cache and not np.all(branch_keys == self._cache["uid_branch"]):
-            self._cache.clear()
+        # if "uid_branch" in self._cache and not np.all(branch_keys == self._cache["uid_branch"]):
+        #     self._cache.clear()
+
+        if "uid_branch" in self._cache:
+            cached_branch_keys = self._cache["uid_branch"]
+            if len(branch_keys) != len(cached_branch_keys) or not np.array_equal(branch_keys, cached_branch_keys):
+                self._cache.clear()
 
         if "multi_modal_inputs" not in self._cache:
             min_pixels = data.meta_info["min_pixels"]
@@ -682,6 +638,34 @@ class FSDPWorker(Worker):
 
         output = output.to("cpu")
         return output
+
+    @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
+    def compute_cross_log_probs(self, data: DataProto):
+        self._process_multi_modal_inputs(data)
+        data = data.to(torch.cuda.current_device())
+
+        if self._use_param_offload:
+            load_fsdp_model(self.fsdp_module)
+        
+        with self.ulysses_sharding_manager:
+            data = self.ulysses_sharding_manager.preprocess_data(data=data)
+            log_probs = self.actor.compute_log_prob(data=data)
+            output = DataProto.from_dict(
+                tensors={"cross_log_probs": log_probs},
+                non_tensors={"pair_index": data.non_tensor_batch["pair_index"]}
+            )
+            output = self.ulysses_sharding_manager.postprocess_data(data=output)
+
+        # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
+        # unshard the root FSDP module
+        if self.world_size > 1:
+            self.fsdp_module._handle.reshard(True)
+
+        if self._use_ref_param_offload:
+            offload_fsdp_model(self.fsdp_module)
+        
+        output = output.to("cpu")
+        return output       
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def compute_values(self, data: DataProto):

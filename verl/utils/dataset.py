@@ -366,7 +366,6 @@ class RLHFDataset(Dataset):
         raw_prompt_ids = self._truncate_prompt(prompt)
 
         example_out = dict(
-            original_prompt_text=original_prompt_text,
             input_ids=input_ids,
             attention_mask=attention_mask,
             position_ids=position_ids,

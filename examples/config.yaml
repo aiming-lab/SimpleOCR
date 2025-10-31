@@ -19,7 +19,7 @@ data:
   min_pixels: 262144
   max_pixels: 2097152 # 4194304
   filter_overlong_prompts: true
-  enable_dual_branch: false
+  enable_dual_branch: true
   branch: B
 
 algorithm:
@@ -89,7 +89,7 @@ worker:
     reward_function_kwargs: {format_weight: 0.1}
 
 trainer:
-  total_epochs: 15
+  total_epochs: 5
   max_steps: null
   project_name: easy_r1
   experiment_name: qwen2_5_7b_math_grpo
@@ -98,7 +98,7 @@ trainer:
   n_gpus_per_node: 8
   max_try_make_batch: 20  # -1 means no limit
   val_freq: 5  # -1 to disable
-  val_before_train: false
+  val_before_train: true
   val_only: false
   val_generations_to_log: 3
   save_freq: 5  # -1 to disable

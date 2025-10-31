@@ -21,6 +21,7 @@ from typing import Any, Optional
 
 import torch
 import torch.distributed as dist
+import numpy as np
 from einops import rearrange
 from ray.experimental.tqdm_ray import tqdm
 from torch import nn
@@ -43,6 +44,50 @@ except ImportError:
 
 
 __all__ = ["DataParallelPPOActor"]
+
+def anneal_branch_sampler(micro_batch: dict[str, torch.Tensor], anneal_prob: float = 0.0) -> dict[str, torch.Tensor]:
+    """
+    Anneal-based branch sampler for micro_batch dictionaries.
+
+    Each micro_batch has keys like 'input_ids_A', 'input_ids_B', etc.
+    With probability `anneal_prob`, select A branch; otherwise B branch.
+    Returns a new dictionary with unified keys (no _A/_B suffixes).
+    """
+
+    # --- Step 1. Prepare probability mask ---
+    device = next(iter(micro_batch.values())).device
+    batch_size = next(iter(micro_batch.values())).size(0)
+    branch_mask = torch.bernoulli(
+        torch.full((batch_size,), float(anneal_prob), device=device, dtype=torch.float32)
+    ).bool()
+
+    merged = {}
+
+    # --- Step 2. Merge tensor branches ---
+    keys_A = [k for k in micro_batch.keys() if k.endswith("_A")]
+    for key_A in keys_A:
+        key_base = key_A[:-2]
+        key_B = key_base + "_B"
+        if key_B not in micro_batch:
+            raise KeyError(f"Missing paired key for {key_A}")
+
+        tensor_A = micro_batch[key_A]
+        tensor_B = micro_batch[key_B]
+
+        if tensor_A.shape != tensor_B.shape:
+            raise ValueError(f"Shape mismatch: {key_A} {tensor_A.shape} vs {key_B} {tensor_B.shape}")
+
+        mask_exp = branch_mask.view(-1, *([1] * (tensor_A.ndim - 1)))
+        merged[key_base] = torch.where(mask_exp, tensor_A, tensor_B)
+
+    # --- Step 3. Keep keys without _A/_B suffix (meta / non-dual fields) ---
+    for key, val in micro_batch.items():
+        if not (key.endswith("_A") or key.endswith("_B")):
+            merged[key] = val
+
+    # --- Step 4. Return merged micro_batch ---
+    merged["branch_mask"] = branch_mask  # Optional: for debug / metrics
+    return merged
 
 
 class DataParallelPPOActor(BasePPOActor):
@@ -153,6 +198,52 @@ class DataParallelPPOActor(BasePPOActor):
             log_probs = self.log_probs_from_logits(logits, responses)  # (bsz, response_length)
 
         return log_probs
+    
+    def _compute_visual_uncertainty(
+        self,
+        cross_log_probs: torch.Tensor,
+        log_probs: torch.Tensor,
+        response_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        import torch.nn.functional as F
+        eps = 1e-8
+
+        # F.kl_div expects inputs: log(Q), P (prob)
+        P = torch.exp(log_probs).clamp_min(eps)
+        kl_pq = F.kl_div(cross_log_probs, P, reduction='none', log_target=True)
+        kl_qp = F.kl_div(log_probs, torch.exp(cross_log_probs).clamp_min(eps), reduction='none', log_target=True)
+
+        sym_kl = 0.5 * (kl_pq + kl_qp)
+        sym_kl = sym_kl * response_mask
+        valid_count = response_mask.sum(dim=-1).clamp_min(1)
+        return sym_kl.sum(dim=-1) / valid_count
+
+    def _forward_micro_batch_cross_probs(self, model_inputs: dict[str, torch.Tensor], temperature: float) -> torch.Tensor:
+        """
+        Compute cross log-probs: (B prompt + A response).
+        `model_inputs` is a flat dict containing *_A and *_B tensors.
+        """
+        if not any(k.endswith("_A") for k in model_inputs.keys()):
+            raise ValueError("cross probs expects dual-branch inputs with *_A/_B keys")
+
+        # split A/B views
+        batch_A = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_A")}
+        batch_B = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_B")}
+
+        resp_len_B = batch_B["responses"].size(1)
+
+        cross_batch = {
+            # take B prompt (all tokens except its response tail) + A response
+            "input_ids":       torch.cat([batch_B["input_ids"][:, :-resp_len_B], batch_A["responses"]], dim=-1),
+            "attention_mask":  torch.cat([batch_B["attention_mask"][:, :-resp_len_B], batch_A["response_mask"]], dim=-1),
+            "position_ids":    batch_B["position_ids"],
+            "responses":       batch_A["responses"],
+            "response_mask":   batch_A["response_mask"],
+        }
+        if "multi_modal_inputs_B" in model_inputs:
+            cross_batch["multi_modal_inputs"] = model_inputs["multi_modal_inputs_B"]
+
+        return self._forward_micro_batch(cross_batch, temperature=temperature)
 
     def _optimizer_step(self) -> torch.Tensor:
         if isinstance(self.actor_module, FSDP):
@@ -220,14 +311,25 @@ class DataParallelPPOActor(BasePPOActor):
             log_probs = restore_dynamic_batch(log_probs, batch_idx_list)
 
         return log_probs
-
+        
     def update_policy(self, data: DataProto) -> dict[str, Any]:
         self.actor_module.train()
 
         temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid slient error
-        select_keys = ["input_ids", "attention_mask", "position_ids", "responses", "response_mask"]
-        select_keys.extend(["old_log_probs", "ref_log_probs", "advantages"])
+        base_keys = ["input_ids", "attention_mask", "position_ids", "responses", "response_mask"]
+        extra_keys = ["old_log_probs", "ref_log_probs", "advantages"]
         non_tensor_select_keys = ["multi_modal_inputs"]
+
+        # detect dual-branch case
+        dual_mode = any(k.endswith("_A") for k in data.batch.keys())
+
+        if dual_mode:
+            # add both A and B branch versions
+            select_keys = [f"{k}_A" for k in base_keys + extra_keys] + [f"{k}_B" for k in base_keys + extra_keys]
+            non_tensor_select_keys = ["multi_modal_inputs_A", "multi_modal_inputs_B"]
+        else:
+            select_keys = base_keys + extra_keys
+            non_tensor_select_keys = ["multi_modal_inputs"]
 
         # Split to make minibatch iterator for updating the actor
         # See PPO paper for details. https://arxiv.org/abs/1707.06347
@@ -239,10 +341,7 @@ class DataParallelPPOActor(BasePPOActor):
                 mini_batches = tqdm(mini_batches, desc="Train mini-batches", position=1)
 
             for mini_batch in mini_batches:
-                total_response_tokens = torch.sum(mini_batch.batch["response_mask"])
-                dist.all_reduce(total_response_tokens, op=dist.ReduceOp.SUM)
-
-                if self.config.dynamic_batching:
+                if self.config.dynamic_batching and not dual_mode:
                     max_input_len = mini_batch.batch["input_ids"].size(-1)
                     max_token_len = self.config.micro_batch_size_per_device_for_update * max_input_len
                     micro_batches, _ = prepare_dynamic_batch(mini_batch, max_token_len=max_token_len)
@@ -254,12 +353,54 @@ class DataParallelPPOActor(BasePPOActor):
 
                 for micro_batch in micro_batches:
                     model_inputs = {**micro_batch.batch, **micro_batch.non_tensor_batch}
-                    response_mask = model_inputs["response_mask"]
-                    old_log_probs = model_inputs["old_log_probs"]
-                    advantages = model_inputs["advantages"]
+                    dual_mode = any(k.endswith("_A") for k in model_inputs.keys())
 
-                    # all return: (bsz, response_length)
-                    log_probs = self._forward_micro_batch(model_inputs, temperature=temperature)
+                    if not dual_mode:
+                        total_response_tokens = torch.sum(mini_batch.batch["response_mask"])
+                        dist.all_reduce(total_response_tokens, op=dist.ReduceOp.SUM)
+                        response_mask = model_inputs["response_mask"]
+                        old_log_probs = model_inputs["old_log_probs"]
+                        advantages = model_inputs["advantages"]
+
+                        log_probs = self._forward_micro_batch(model_inputs, temperature=temperature)
+
+                    else:
+                        # === dual-branch ===
+                        # branch A
+                        model_inputs_A = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_A")}
+                        response_mask_A = model_inputs_A["response_mask"]
+                        old_log_probs_A = model_inputs_A["old_log_probs"]
+                        advantages_A = model_inputs_A["advantages"]
+
+                        log_probs_A = self._forward_micro_batch(model_inputs_A, temperature=temperature)
+
+                        # branch B
+                        model_inputs_B = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_B")}
+                        response_mask_B = model_inputs_B["response_mask"]
+                        old_log_probs_B = model_inputs_B["old_log_probs"]
+                        advantages_B = model_inputs_B["advantages"]
+
+                        log_probs_B = self._forward_micro_batch(model_inputs_B, temperature=temperature)
+                        cross_log_probs = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
+
+                        visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs, log_probs_A, response_mask_A).detach()
+                        advantages_B = advantages_B + torch.min(
+                            advantages_B,
+                            self.config.visual_uncertainty_coef * visual_uncertainty
+                        )
+                        anneal_prob = getattr(self.config, "anneal_prob", 0.0)
+                        device = log_probs_A.device
+                        batch_size = log_probs_A.size(0)
+                        branch_mask = torch.bernoulli(torch.full((batch_size,), anneal_prob, device=device)).bool()
+
+                        mask_exp = branch_mask.view(-1, 1)
+
+                        log_probs     = torch.where(mask_exp, log_probs_A, log_probs_B)
+                        old_log_probs = torch.where(mask_exp, old_log_probs_A, old_log_probs_B)
+                        advantages    = torch.where(mask_exp, advantages_A, advantages_B)
+                        response_mask = torch.where(mask_exp, response_mask_A, response_mask_B)
+                        total_response_tokens = torch.sum(response_mask)
+                        dist.all_reduce(total_response_tokens, op=dist.ReduceOp.SUM)
 
                     pg_loss, pg_metrics = compute_policy_loss(
                         old_log_probs=old_log_probs,

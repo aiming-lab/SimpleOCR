@@ -152,8 +152,172 @@ def compute_advantage(data: DataProto, adv_estimator: AdvantageEstimator, gamma:
     advantages, returns = compute_advantage_return(adv_estimator, **adv_inputs)
     data.batch["advantages"] = advantages
     data.batch["returns"] = returns
+
     return data
 
+# def _switch_dual_branch_response(data: DataProto):
+#     if "branch" not in data.non_tensor_batch:
+#         raise KeyError("No 'branch' key found in non_tensor_batch.")
+
+#     branches = np.array(data.non_tensor_batch["branch"], dtype=str)
+#     uids = np.array(data.non_tensor_batch["uid"], dtype=object)
+#     n_samples = len(uids)
+
+#     A_idx = np.where(branches == "A")[0]
+#     B_idx = np.where(branches == "B")[0]
+
+#     uid_to_A = {}
+#     uid_to_B = {}
+#     for idx in A_idx:
+#         uid_to_A.setdefault(uids[idx], []).append(idx)
+#     for idx in B_idx:
+#         uid_to_B.setdefault(uids[idx], []).append(idx)
+
+#     # clone tensors
+#     responses = data.batch["responses"].clone()
+#     response_mask = data.batch["response_mask"].clone()
+#     attention_mask = data.batch["attention_mask"].clone()
+#     resp_len = response_mask.shape[1]
+
+#     pair_index = np.full((n_samples,), fill_value=-1, dtype=np.int64)  # default -1
+
+#     for uid, a_indices in uid_to_A.items():
+#         if uid not in uid_to_B:
+#             print(f"UID {uid} has A branch but no B branch.")
+#             torch.save(data, "debug_cross_log.pt")
+#             breakpoint()
+#             raise ValueError(f"UID {uid} has A branch but no B branch.")
+#         b_indices = uid_to_B[uid]
+#         if len(a_indices) != len(b_indices):
+#             print(f"UID {uid} has unequal A({len(a_indices)}) / B({len(b_indices)}) samples.")
+#             breakpoint()
+#             raise ValueError(f"UID {uid} has unequal A({len(a_indices)}) / B({len(b_indices)}) samples.")
+
+#         a_indices_t = torch.tensor(a_indices, dtype=torch.long)
+#         b_indices_t = torch.tensor(b_indices, dtype=torch.long)
+
+#         for a_i, b_i in zip(a_indices, b_indices):
+#             pair_index[a_i] = b_i
+#             pair_index[b_i] = a_i
+
+#         data.batch["responses"][a_indices_t] = responses[b_indices_t]
+#         data.batch["responses"][b_indices_t] = responses[a_indices_t]
+
+#         data.batch["response_mask"][a_indices_t] = response_mask[b_indices_t]
+#         data.batch["response_mask"][b_indices_t] = response_mask[a_indices_t]
+
+#         data.batch["attention_mask"][a_indices_t, -resp_len:] = attention_mask[b_indices_t, -resp_len:]
+#         data.batch["attention_mask"][b_indices_t, -resp_len:] = attention_mask[a_indices_t, -resp_len:]
+
+#     data.non_tensor_batch["pair_index"] = pair_index
+
+def _add_pair_index(data: DataProto):
+    if "branch" not in data.non_tensor_batch:
+        raise KeyError("No 'branch' key found in non_tensor_batch.")
+    if "uid" not in data.non_tensor_batch:
+        raise KeyError("No 'uid' key found in non_tensor_batch.")
+
+    branches = np.array(data.non_tensor_batch["branch"], dtype=str)
+    uids = np.array(data.non_tensor_batch["uid"], dtype=object)
+    n_samples = len(uids)
+
+    A_idx = np.where(branches == "A")[0]
+    B_idx = np.where(branches == "B")[0]
+
+    uid_to_A, uid_to_B = {}, {}
+    for idx in A_idx:
+        uid_to_A.setdefault(uids[idx], []).append(idx)
+    for idx in B_idx:
+        uid_to_B.setdefault(uids[idx], []).append(idx)
+
+    pair_index = np.full((n_samples,), fill_value=-1, dtype=np.int64)
+
+    for uid, a_indices in uid_to_A.items():
+        if uid not in uid_to_B:
+            print(f"UID {uid} has A branch but no B branch.")
+            raise ValueError(f"UID {uid} has A branch but no B branch.")
+        b_indices = uid_to_B[uid]
+        if len(a_indices) != len(b_indices):
+            print(f"UID {uid} has unequal A({len(a_indices)}) / B({len(b_indices)}) samples.")
+            raise ValueError(f"UID {uid} has unequal A({len(a_indices)}) / B({len(b_indices)}) samples.")
+
+        for a_i, b_i in zip(a_indices, b_indices):
+            pair_index[a_i] = b_i
+            pair_index[b_i] = a_i
+
+    data.non_tensor_batch["pair_index"] = pair_index
+    return data
+
+def swap_cross_log_probs(data: DataProto, field="cross_log_probs"):
+    pair_index = np.array(data.non_tensor_batch["pair_index"])
+    tensor = data.batch[field]
+    tensor_clone = tensor.clone()
+    visited = np.zeros_like(pair_index, dtype=bool)
+
+    for i, j in enumerate(pair_index):
+        if j >= 0 and not visited[i] and not visited[j]:
+            tensor[i] = tensor_clone[j]
+            tensor[j] = tensor_clone[i]
+            visited[i] = visited[j] = True
+
+    data.batch[field] = tensor
+    return data
+
+
+def merge_dual_branches(data: DataProto) -> DataProto:
+    """
+    Merge A/B branch samples with the same UID into a single sample entry.
+    New keys are created in both batch and non_tensor_batch for the B branch data.
+    """
+    branches = np.array(data.non_tensor_batch["branch"], dtype=str)
+    uids = np.array(data.non_tensor_batch["uid"], dtype=object)
+    pair_index = np.array(data.non_tensor_batch.get("pair_index", -np.ones(len(uids), dtype=np.int64)))
+    A_idx = np.where(branches == "A")[0]
+    B_idx = np.where(branches == "B")[0]
+
+    uid_to_A, uid_to_B = {}, {}
+    for idx in A_idx:
+        uid_to_A.setdefault(uids[idx], []).append(idx)
+    for idx in B_idx:
+        uid_to_B.setdefault(uids[idx], []).append(idx)
+
+    merge_pairs = []
+    for uid, a_indices in uid_to_A.items():
+        b_indices = uid_to_B.get(uid, [])
+        if len(a_indices) != len(b_indices):
+            raise ValueError(f"UID {uid} has unequal A({len(a_indices)}) / B({len(b_indices)}) samples.")
+        merge_pairs.extend(zip(a_indices, b_indices))
+
+    merged_tensors = {}
+    for key, tensor in data.batch.items():
+        a_indices = [a for a, _ in merge_pairs]
+        b_indices = [b for _, b in merge_pairs]
+        merged_tensors[f"{key}_A"] = tensor[a_indices]
+        merged_tensors[f"{key}_B"] = tensor[b_indices]
+
+    merged_non_tensors = {}
+    a_indices = [a for a, _ in merge_pairs]
+    b_indices = [b for _, b in merge_pairs]
+
+    for key, arr in data.non_tensor_batch.items():
+        if key in ("branch", "pair_index"):
+            continue
+        if len(arr) != len(uids):
+            continue
+
+        arr_A = np.array(arr)[a_indices]
+        arr_B = np.array(arr)[b_indices]
+        merged_non_tensors[f"{key}_A"] = arr_A
+        merged_non_tensors[f"{key}_B"] = arr_B
+
+    merged_non_tensors["uid"] = np.array(uids)[a_indices]
+
+    merged_data = DataProto.from_dict(
+        tensors=merged_tensors,
+        non_tensors=merged_non_tensors,
+        meta_info=data.meta_info,
+    )
+    return merged_data
 
 class RayPPOTrainer:
     """
@@ -398,7 +562,11 @@ class RayPPOTrainer:
         print("Start validation...")
         self.actor_rollout_ref_wg.prepare_rollout_engine()
         for batch_dict in self.val_dataloader:
-            test_batch = DataProto.from_single_dict(batch_dict)
+            if isinstance(batch_dict, tuple):
+                batch_data = batch_dict[0]
+            else:
+                batch_data = batch_dict
+            test_batch = DataProto.from_single_dict(batch_data)
             test_gen_batch = test_batch.pop(
                 batch_keys=["input_ids", "attention_mask", "position_ids"],
                 non_tensor_batch_keys=["raw_prompt_ids", "multi_modal_data"],
@@ -627,11 +795,12 @@ class RayPPOTrainer:
                 # balance the number of valid tokens on each dp rank.
                 # NOTE: this breaks the order of data inside the batch.
                 # Please take care when you implement group based adv computation such as GRPO and rloo
-                # breakpoint()
                 self._balance_batch(batch, metrics=metrics)
+                if self.config.data.enable_dual_branch:
+                    batch = _add_pair_index(batch)
                 # compute global valid tokens
                 batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
-
+                # torch.save(batch, f"debug_dual_branch.pt")
                 # compute reward
                 if "token_level_scores" not in batch.batch:
                     with timer("reward", timing_raw):
@@ -642,6 +811,17 @@ class RayPPOTrainer:
                     old_log_probs = self.actor_rollout_ref_wg.compute_log_probs(batch)
                     batch = batch.union(old_log_probs)
 
+                # if self.config.data.enable_dual_branch:
+                #     import copy
+                #     new_batch = copy.deepcopy(batch)
+                #     _switch_dual_branch_response(new_batch)
+                #     # compute cross_log_probs
+                #     with timer("cross", timing_raw):
+                #         cross_log_probs = self.actor_rollout_ref_wg.compute_cross_log_probs(new_batch)
+                #         cross_log_probs = swap_cross_log_probs(cross_log_probs, field="cross_log_probs")
+                #         del new_batch
+                #         batch = batch.union(cross_log_probs)
+                
                 # compute ref_log_probs
                 if self.use_reference_policy:
                     with timer("ref", timing_raw):
@@ -678,6 +858,10 @@ class RayPPOTrainer:
                         lam=self.config.algorithm.lam,
                     )
 
+                if self.config.data.enable_dual_branch:
+                    batch = merge_dual_branches(batch)
+                # torch.save(batch, "debug_adv_merged.pt")
+                # batch = torch.load("/home/yibop/ocr-unc/debug_adv_merged.pt", map_location="cpu", weights_only=False)
                 # update critic
                 if self.use_critic:
                     with timer("update_critic", timing_raw):

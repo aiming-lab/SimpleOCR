@@ -90,6 +90,8 @@ class ActorConfig:
     """clip ratio in PPO & DAPO"""
     clip_ratio_dual: float = 3.0
     """constant C in dual-clip PPO, clips when advantage < -C"""
+    visual_uncertainty_coef: float = 1.0
+    """coefficient for visual uncertainty in advantage calculation"""
     loss_avg_mode: str = "token"
     """loss average mode: `token`, `seq`"""
     ppo_epochs: int = 1
