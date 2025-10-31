@@ -206,12 +206,8 @@ class DataParallelPPOActor(BasePPOActor):
         response_mask: torch.Tensor,
     ) -> torch.Tensor:
         import torch.nn.functional as F
-        eps = 1e-8
-
-        # F.kl_div expects inputs: log(Q), P (prob)
-        P = torch.exp(log_probs).clamp_min(eps)
-        kl_pq = F.kl_div(cross_log_probs, P, reduction='none', log_target=True)
-        kl_qp = F.kl_div(log_probs, torch.exp(cross_log_probs).clamp_min(eps), reduction='none', log_target=True)
+        kl_pq = F.kl_div(cross_log_probs, log_probs, reduction='none', log_target=True)
+        kl_qp = F.kl_div(log_probs, cross_log_probs, reduction='none', log_target=True)
 
         sym_kl = 0.5 * (kl_pq + kl_qp)
         sym_kl = sym_kl * response_mask
