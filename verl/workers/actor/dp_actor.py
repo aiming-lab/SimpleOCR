@@ -385,7 +385,7 @@ class DataParallelPPOActor(BasePPOActor):
 
                         visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs, log_probs_A, response_mask_A).detach()
                         advantages_B = advantages_B + torch.min(
-                            advantages_B,
+                            advantages_B.abs(),
                             self.config.visual_uncertainty_coef * visual_uncertainty
                         )
                         anneal_prob = getattr(self.config, "anneal_prob", 0.0)
