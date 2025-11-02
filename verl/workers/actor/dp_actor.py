@@ -26,6 +26,7 @@ from einops import rearrange
 from ray.experimental.tqdm_ray import tqdm
 from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+import torch.nn.functional as F
 
 from ...protocol import DataProto, batch_collate
 from ...trainer.core_algos import average_loss, compute_kl, compute_policy_loss
@@ -105,12 +106,13 @@ class DataParallelPPOActor(BasePPOActor):
         self.world_size = int(os.getenv("WORLD_SIZE", "1"))
         self.actor_module = actor_module
         self.actor_optimizer = actor_optimizer
+        self.dual_mode = False
         if config.use_torch_compile:
             self.log_probs_from_logits = torch.compile(VF.log_probs_from_logits, dynamic=True)
         else:
             self.log_probs_from_logits = VF.log_probs_from_logits
 
-    def _forward_micro_batch(self, micro_batch: dict[str, torch.Tensor], temperature: float) -> torch.Tensor:
+    def _forward_micro_batch(self, micro_batch: dict[str, torch.Tensor], temperature: float, dual_mode: bool = False) -> torch.Tensor:
         """
         Returns:
             log_probs: # (bs, response_len)
@@ -197,22 +199,47 @@ class DataParallelPPOActor(BasePPOActor):
             logits = logits[:, -response_length - 1 : -1, :]  # (bsz, response_length, vocab_size)
             log_probs = self.log_probs_from_logits(logits, responses)  # (bsz, response_length)
 
-        return log_probs
+        if not dual_mode:
+            return log_probs
+        else:
+            if self.config.padding_free:
+                log_probs_full_vocab = F.log_softmax(logits_rmpad, dim=-1)
+                if self.config.ulysses_size > 1:
+                    log_probs_full_vocab = gather_outputs_and_unpad(
+                        log_probs_full_vocab, gather_dim=0, unpad_dim=0, padding_size=pad_size
+                    )
+                log_probs_full_vocab = pad_input(
+                    hidden_states=log_probs_full_vocab, indices=indices, batch=batch_size, seqlen=seqlen
+                )
+                log_probs_full_vocab = log_probs_full_vocab[:, -response_length - 1 : -1, :]  # (bsz, response_length, vocab_size)
+            else:
+                log_probs_full_vocab = F.log_softmax(logits, dim=-1)
+
+            return log_probs, log_probs_full_vocab.detach()
+
     
     def _compute_visual_uncertainty(
         self,
-        cross_log_probs: torch.Tensor,
-        log_probs: torch.Tensor,
-        response_mask: torch.Tensor,
+        cross_log_probs: torch.Tensor,  # [B, seq, vocab]
+        log_probs: torch.Tensor,        # [B, seq, vocab]
+        response_mask: torch.Tensor,    # [B, seq]
+        mode: str = "token_level",      # or "sequence_level"
     ) -> torch.Tensor:
-        import torch.nn.functional as F
-        kl_pq = F.kl_div(cross_log_probs, log_probs, reduction='none', log_target=True)
-        kl_qp = F.kl_div(log_probs, cross_log_probs, reduction='none', log_target=True)
+        kl_pq = F.kl_div(cross_log_probs, log_probs, reduction="none", log_target=True)
+        kl_qp = F.kl_div(log_probs, cross_log_probs, reduction="none", log_target=True)
+        sym_kl = 0.5 * (kl_pq + kl_qp)  # [B, seq, vocab]
 
-        sym_kl = 0.5 * (kl_pq + kl_qp)
-        sym_kl = sym_kl * response_mask
-        valid_count = response_mask.sum(dim=-1).clamp_min(1)
-        return sym_kl.sum(dim=-1) / valid_count
+        sym_kl = sym_kl.sum(dim=-1)  # [B, seq]
+
+        sym_kl = sym_kl * response_mask  # [B, seq]
+
+        if mode == "sequence_level":
+            valid_count = response_mask.sum(dim=-1).clamp_min(1)
+            return sym_kl.sum(dim=-1) / valid_count  # [B]
+        elif mode == "token_level":
+            return sym_kl  # [B, seq]
+        else:
+            raise ValueError(f"Unknown mode {mode} for visual uncertainty computation.")
 
     def _forward_micro_batch_cross_probs(self, model_inputs: dict[str, torch.Tensor], temperature: float) -> torch.Tensor:
         """
@@ -239,7 +266,7 @@ class DataParallelPPOActor(BasePPOActor):
         if "multi_modal_inputs_B" in model_inputs:
             cross_batch["multi_modal_inputs"] = model_inputs["multi_modal_inputs_B"]
 
-        return self._forward_micro_batch(cross_batch, temperature=temperature)
+        return self._forward_micro_batch(cross_batch, temperature=temperature, dual_mode=self.dual_mode)
 
     def _optimizer_step(self) -> torch.Tensor:
         if isinstance(self.actor_module, FSDP):
@@ -315,11 +342,13 @@ class DataParallelPPOActor(BasePPOActor):
         base_keys = ["input_ids", "attention_mask", "position_ids", "responses", "response_mask"]
         extra_keys = ["old_log_probs", "ref_log_probs", "advantages"]
         non_tensor_select_keys = ["multi_modal_inputs"]
+        global_step = data.meta_info.get("global_step", None)
+        total_steps = data.meta_info.get("total_steps", None)
 
         # detect dual-branch case
-        dual_mode = any(k.endswith("_A") for k in data.batch.keys())
+        self.dual_mode = any(k.endswith("_A") for k in data.batch.keys())
 
-        if dual_mode:
+        if self.dual_mode:
             # add both A and B branch versions
             select_keys = [f"{k}_A" for k in base_keys + extra_keys] + [f"{k}_B" for k in base_keys + extra_keys]
             non_tensor_select_keys = ["multi_modal_inputs_A", "multi_modal_inputs_B"]
@@ -337,7 +366,7 @@ class DataParallelPPOActor(BasePPOActor):
                 mini_batches = tqdm(mini_batches, desc="Train mini-batches", position=1)
 
             for mini_batch in mini_batches:
-                if self.config.dynamic_batching and not dual_mode:
+                if self.config.dynamic_batching and not self.dual_mode:
                     max_input_len = mini_batch.batch["input_ids"].size(-1)
                     max_token_len = self.config.micro_batch_size_per_device_for_update * max_input_len
                     micro_batches, _ = prepare_dynamic_batch(mini_batch, max_token_len=max_token_len)
@@ -349,16 +378,15 @@ class DataParallelPPOActor(BasePPOActor):
 
                 for micro_batch in micro_batches:
                     model_inputs = {**micro_batch.batch, **micro_batch.non_tensor_batch}
-                    dual_mode = any(k.endswith("_A") for k in model_inputs.keys())
 
-                    if not dual_mode:
+                    if not self.dual_mode:
                         total_response_tokens = torch.sum(mini_batch.batch["response_mask"])
                         dist.all_reduce(total_response_tokens, op=dist.ReduceOp.SUM)
                         response_mask = model_inputs["response_mask"]
                         old_log_probs = model_inputs["old_log_probs"]
                         advantages = model_inputs["advantages"]
 
-                        log_probs = self._forward_micro_batch(model_inputs, temperature=temperature)
+                        log_probs = self._forward_micro_batch(model_inputs, temperature=temperature, dual_mode=self.dual_mode)
 
                     else:
                         # === dual-branch ===
@@ -368,7 +396,7 @@ class DataParallelPPOActor(BasePPOActor):
                         old_log_probs_A = model_inputs_A["old_log_probs"]
                         advantages_A = model_inputs_A["advantages"]
 
-                        log_probs_A = self._forward_micro_batch(model_inputs_A, temperature=temperature)
+                        log_probs_A, log_probs_A_full_vocab = self._forward_micro_batch(model_inputs_A, temperature=temperature, dual_mode=self.dual_mode)
 
                         # branch B
                         model_inputs_B = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_B")}
@@ -376,17 +404,23 @@ class DataParallelPPOActor(BasePPOActor):
                         old_log_probs_B = model_inputs_B["old_log_probs"]
                         advantages_B = model_inputs_B["advantages"]
 
-                        log_probs_B = self._forward_micro_batch(model_inputs_B, temperature=temperature)
-                        cross_log_probs = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
-
-                        visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs, log_probs_A, response_mask_A).detach()
-                        advantages_B = advantages_B + torch.min(
-                            advantages_B.abs(),
-                            self.config.visual_uncertainty_coef * visual_uncertainty
-                        )
-                        anneal_prob = getattr(self.config, "anneal_prob", 0.0)
+                        log_probs_B, _ = self._forward_micro_batch(model_inputs_B, temperature=temperature, dual_mode=self.dual_mode)
+                        _, cross_log_probs_full_vocab = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
+                        
+                        # compute visual uncertainty and adjust advantages_B
+                        visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_A_full_vocab, response_mask_A, mode="token_level")
+                        
+                        del cross_log_probs_full_vocab, log_probs_A_full_vocab
+                        torch.cuda.empty_cache()
+                        
+                        # advantages_B = advantages_B + torch.min(
+                        #     advantages_B.abs(),
+                        #     self.config.visual_uncertainty_coef * visual_uncertainty
+                        # )
+                        anneal_prob = 1.0
                         device = log_probs_A.device
                         batch_size = log_probs_A.size(0)
+                        # breakpoint()
                         branch_mask = torch.bernoulli(torch.full((batch_size,), anneal_prob, device=device)).bool()
 
                         mask_exp = branch_mask.view(-1, 1)

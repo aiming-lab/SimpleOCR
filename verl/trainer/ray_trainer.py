@@ -713,7 +713,6 @@ class RayPPOTrainer:
         self.data_iterator = iter(self.train_dataloader)
         while self.global_step < self.training_steps:
             self.global_step += 1
-
             metrics, timing_raw = {}, {}
             with timer("step", timing_raw):
                 # make a batch of data
@@ -721,6 +720,8 @@ class RayPPOTrainer:
                     self.actor_rollout_ref_wg.prepare_rollout_engine()
                     batch, batch_dict = self._make_batch_data(metrics=metrics)
                     self.actor_rollout_ref_wg.release_rollout_engine()
+                batch.meta_info["global_step"] = self.global_step
+                batch.meta_info["total_steps"] = self.training_steps
                 # balance the number of valid tokens on each dp rank.
                 # NOTE: this breaks the order of data inside the batch.
                 # Please take care when you implement group based adv computation such as GRPO and rloo
@@ -729,7 +730,6 @@ class RayPPOTrainer:
                     batch = _add_pair_index(batch)
                 # compute global valid tokens
                 batch.meta_info["global_token_num"] = torch.sum(batch.batch["attention_mask"], dim=-1).tolist()
-                # torch.save(batch, f"debug_dual_branch.pt")
                 # compute reward
                 if "token_level_scores" not in batch.batch:
                     with timer("reward", timing_raw):
@@ -775,7 +775,7 @@ class RayPPOTrainer:
                         gamma=self.config.algorithm.gamma,
                         lam=self.config.algorithm.lam,
                     )
-
+                torch.save(batch, "debug_adv_branch.pt")
                 if self.config.data.enable_dual_branch:
                     batch = merge_dual_branches(batch)
                 # torch.save(batch, "debug_adv_merged.pt")
