@@ -46,51 +46,6 @@ except ImportError:
 
 __all__ = ["DataParallelPPOActor"]
 
-def anneal_branch_sampler(micro_batch: dict[str, torch.Tensor], anneal_prob: float = 0.0) -> dict[str, torch.Tensor]:
-    """
-    Anneal-based branch sampler for micro_batch dictionaries.
-
-    Each micro_batch has keys like 'input_ids_A', 'input_ids_B', etc.
-    With probability `anneal_prob`, select A branch; otherwise B branch.
-    Returns a new dictionary with unified keys (no _A/_B suffixes).
-    """
-
-    # --- Step 1. Prepare probability mask ---
-    device = next(iter(micro_batch.values())).device
-    batch_size = next(iter(micro_batch.values())).size(0)
-    branch_mask = torch.bernoulli(
-        torch.full((batch_size,), float(anneal_prob), device=device, dtype=torch.float32)
-    ).bool()
-
-    merged = {}
-
-    # --- Step 2. Merge tensor branches ---
-    keys_A = [k for k in micro_batch.keys() if k.endswith("_A")]
-    for key_A in keys_A:
-        key_base = key_A[:-2]
-        key_B = key_base + "_B"
-        if key_B not in micro_batch:
-            raise KeyError(f"Missing paired key for {key_A}")
-
-        tensor_A = micro_batch[key_A]
-        tensor_B = micro_batch[key_B]
-
-        if tensor_A.shape != tensor_B.shape:
-            raise ValueError(f"Shape mismatch: {key_A} {tensor_A.shape} vs {key_B} {tensor_B.shape}")
-
-        mask_exp = branch_mask.view(-1, *([1] * (tensor_A.ndim - 1)))
-        merged[key_base] = torch.where(mask_exp, tensor_A, tensor_B)
-
-    # --- Step 3. Keep keys without _A/_B suffix (meta / non-dual fields) ---
-    for key, val in micro_batch.items():
-        if not (key.endswith("_A") or key.endswith("_B")):
-            merged[key] = val
-
-    # --- Step 4. Return merged micro_batch ---
-    merged["branch_mask"] = branch_mask  # Optional: for debug / metrics
-    return merged
-
-
 class DataParallelPPOActor(BasePPOActor):
     def __init__(
         self,
