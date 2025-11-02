@@ -685,7 +685,7 @@ class RayPPOTrainer:
                 print(f"{current_batch_size=} >= {rollout_batch_size=}. Finish generating.")
                 if self.config.algorithm.online_filtering:
                     metrics.update({f"reward/{k}": v for k, v in reduce_metrics(all_metrics).items()})
-                return batch[: rollout_batch_size * n_branches * n_rollouts], batch_data
+                return batch[: rollout_batch_size * n_branches * n_rollouts]
             
     def fit(self):
         """
@@ -718,7 +718,7 @@ class RayPPOTrainer:
                 # make a batch of data
                 with timer("gen", timing_raw):
                     self.actor_rollout_ref_wg.prepare_rollout_engine()
-                    batch, batch_dict = self._make_batch_data(metrics=metrics)
+                    batch = self._make_batch_data(metrics=metrics)
                     self.actor_rollout_ref_wg.release_rollout_engine()
                 batch.meta_info["global_step"] = self.global_step
                 batch.meta_info["total_steps"] = self.training_steps
@@ -775,11 +775,9 @@ class RayPPOTrainer:
                         gamma=self.config.algorithm.gamma,
                         lam=self.config.algorithm.lam,
                     )
-                # torch.save(batch, "debug_adv_branch.pt")
                 if self.config.data.enable_dual_branch:
                     batch = merge_dual_branches(batch)
-                # torch.save(batch, "debug_adv_merged.pt")
-                batch = torch.load("/home/yibop/ocr-unc/debug_adv_branch.pt", map_location="cpu", weights_only=False)
+                # batch = torch.load("/home/yibop/ocr-unc/debug_adv_merged.pt", map_location="cpu", weights_only=False)
                 # update critic
                 if self.use_critic:
                     with timer("update_critic", timing_raw):
