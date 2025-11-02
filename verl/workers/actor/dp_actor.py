@@ -338,26 +338,22 @@ class DataParallelPPOActor(BasePPOActor):
     def update_policy(self, data: DataProto) -> dict[str, Any]:
         self.actor_module.train()
 
-        temperature = data.meta_info["temperature"]  # temperature must be in the data.meta_info to avoid slient error
+        temperature = data.meta_info["temperature"]
         base_keys = ["input_ids", "attention_mask", "position_ids", "responses", "response_mask"]
         extra_keys = ["old_log_probs", "ref_log_probs", "advantages"]
         non_tensor_select_keys = ["multi_modal_inputs"]
         global_step = data.meta_info.get("global_step", None)
         total_steps = data.meta_info.get("total_steps", None)
 
-        # detect dual-branch case
         self.dual_mode = any(k.endswith("_A") for k in data.batch.keys())
 
         if self.dual_mode:
-            # add both A and B branch versions
             select_keys = [f"{k}_A" for k in base_keys + extra_keys] + [f"{k}_B" for k in base_keys + extra_keys]
             non_tensor_select_keys = ["multi_modal_inputs_A", "multi_modal_inputs_B"]
         else:
             select_keys = base_keys + extra_keys
             non_tensor_select_keys = ["multi_modal_inputs"]
 
-        # Split to make minibatch iterator for updating the actor
-        # See PPO paper for details. https://arxiv.org/abs/1707.06347
         mini_batches = data.select(select_keys, non_tensor_select_keys).split(self.config.global_batch_size_per_device)
 
         metrics = defaultdict(list)
@@ -376,61 +372,86 @@ class DataParallelPPOActor(BasePPOActor):
                 if self.rank == 0:
                     micro_batches = tqdm(micro_batches, desc="Update policy", position=2)
 
+                if not self.dual_mode:
+                    breakpoint()  # debug
+                    global_total_response_tokens = mini_batch.batch["response_mask"].sum()
+                else:
+                    device_for_mask = next(self.actor_module.parameters()).device
+                    bs = mini_batch.batch["response_mask_A"].size(0)
+
+                    anneal_prob = getattr(self.config, "anneal_prob", 1.0)
+
+                    mini_branch_mask = torch.bernoulli(
+                        torch.full((bs,), float(anneal_prob), device=device_for_mask)
+                    ).bool()
+
+                    if dist.is_initialized():
+                        dist.broadcast(mini_branch_mask, src=0)
+
+                    selected_response_mask_mb = torch.where(
+                        mini_branch_mask.view(-1, 1),
+                        mini_batch.batch["response_mask_A"],
+                        mini_batch.batch["response_mask_B"],
+                    )
+                    global_total_response_tokens = selected_response_mask_mb.sum().detach()
+
+                if dist.is_initialized():
+                    dist.all_reduce(global_total_response_tokens, op=dist.ReduceOp.SUM)
+
+                start_idx = 0
+
                 for micro_batch in micro_batches:
                     model_inputs = {**micro_batch.batch, **micro_batch.non_tensor_batch}
 
                     if not self.dual_mode:
-                        total_response_tokens = torch.sum(mini_batch.batch["response_mask"])
-                        dist.all_reduce(total_response_tokens, op=dist.ReduceOp.SUM)
                         response_mask = model_inputs["response_mask"]
                         old_log_probs = model_inputs["old_log_probs"]
                         advantages = model_inputs["advantages"]
+                        ref_log_probs = model_inputs.get("ref_log_probs", None)
 
-                        log_probs = self._forward_micro_batch(model_inputs, temperature=temperature, dual_mode=self.dual_mode)
+                        log_probs = self._forward_micro_batch(
+                            model_inputs, temperature=temperature, dual_mode=self.dual_mode
+                        )
 
                     else:
-                        # === dual-branch ===
-                        # branch A
+                        # ========== dual-branch ==========
+                        bsz = model_inputs["responses_A"].size(0)
+                        micro_mask = mini_branch_mask[start_idx:start_idx + bsz]
+                        # breakpoint()  # debug
+                        start_idx += bsz
+                        mask_exp = micro_mask.view(-1, 1)
+
                         model_inputs_A = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_A")}
-                        response_mask_A = model_inputs_A["response_mask"]
-                        old_log_probs_A = model_inputs_A["old_log_probs"]
-                        advantages_A = model_inputs_A["advantages"]
-
-                        log_probs_A, log_probs_A_full_vocab = self._forward_micro_batch(model_inputs_A, temperature=temperature, dual_mode=self.dual_mode)
-
-                        # branch B
                         model_inputs_B = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_B")}
-                        response_mask_B = model_inputs_B["response_mask"]
+
+                        log_probs_A, log_probs_A_full_vocab = self._forward_micro_batch(
+                            model_inputs_A, temperature=temperature, dual_mode=True
+                        )
+                        old_log_probs_A = model_inputs_A["old_log_probs"]
+                        advantages_A    = model_inputs_A["advantages"]
+                        response_mask_A = model_inputs_A["response_mask"]
+                        ref_log_probs_A = model_inputs_A.get("ref_log_probs", None)
+
+                        log_probs_B, _ = self._forward_micro_batch(
+                            model_inputs_B, temperature=temperature, dual_mode=True
+                        )
                         old_log_probs_B = model_inputs_B["old_log_probs"]
-                        advantages_B = model_inputs_B["advantages"]
+                        advantages_B    = model_inputs_B["advantages"]
+                        response_mask_B = model_inputs_B["response_mask"]
+                        ref_log_probs_B = model_inputs_B.get("ref_log_probs", None)
 
-                        log_probs_B, _ = self._forward_micro_batch(model_inputs_B, temperature=temperature, dual_mode=self.dual_mode)
-                        _, cross_log_probs_full_vocab = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
-                        
-                        # compute visual uncertainty and adjust advantages_B
-                        visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_A_full_vocab, response_mask_A, mode="token_level")
-                        
-                        del cross_log_probs_full_vocab, log_probs_A_full_vocab
+                        # _, cross_log_probs_full_vocab = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
+                        # visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_A_full_vocab, response_mask_A, mode="token_level")
+                        # del cross_log_probs_full_vocab
+                        del log_probs_A_full_vocab
                         torch.cuda.empty_cache()
-                        
-                        # advantages_B = advantages_B + torch.min(
-                        #     advantages_B.abs(),
-                        #     self.config.visual_uncertainty_coef * visual_uncertainty
-                        # )
-                        anneal_prob = 1.0
-                        device = log_probs_A.device
-                        batch_size = log_probs_A.size(0)
-                        # breakpoint()
-                        branch_mask = torch.bernoulli(torch.full((batch_size,), anneal_prob, device=device)).bool()
 
-                        mask_exp = branch_mask.view(-1, 1)
-
-                        log_probs     = torch.where(mask_exp, log_probs_A, log_probs_B)
+                        log_probs     = torch.where(mask_exp, log_probs_A,     log_probs_B)
                         old_log_probs = torch.where(mask_exp, old_log_probs_A, old_log_probs_B)
-                        advantages    = torch.where(mask_exp, advantages_A, advantages_B)
+                        advantages    = torch.where(mask_exp, advantages_A,    advantages_B)
                         response_mask = torch.where(mask_exp, response_mask_A, response_mask_B)
-                        total_response_tokens = torch.sum(response_mask)
-                        dist.all_reduce(total_response_tokens, op=dist.ReduceOp.SUM)
+                        ref_log_probs = torch.where(mask_exp, ref_log_probs_A, ref_log_probs_B)
+
 
                     pg_loss, pg_metrics = compute_policy_loss(
                         old_log_probs=old_log_probs,
@@ -442,22 +463,24 @@ class DataParallelPPOActor(BasePPOActor):
                         clip_ratio_dual=self.config.clip_ratio_dual,
                         loss_avg_mode=self.config.loss_avg_mode,
                     )
-                    if self.config.use_kl_loss and "ref_log_probs" in model_inputs:
-                        ref_log_probs = model_inputs["ref_log_probs"]
-                        # compute kl loss
-                        kld = compute_kl(
-                            log_probs=log_probs,
-                            ref_log_probs=ref_log_probs,
-                            kl_penalty=self.config.kl_penalty,
-                        )
-                        kl_loss = average_loss(kld, response_mask, mode=self.config.loss_avg_mode)
-                        loss = pg_loss + kl_loss * self.config.kl_coef
-                        metrics["actor/kl_loss"] = kl_loss.detach().item()
-                        metrics["actor/kl_coef"] = self.config.kl_coef
-                    else:
-                        loss = pg_loss
 
-                    loss = loss * torch.sum(response_mask) * self.world_size / total_response_tokens
+                    loss = pg_loss
+                    if self.config.use_kl_loss:
+                        if ref_log_probs is None and (not self.dual_mode):
+                            ref_log_probs = model_inputs.get("ref_log_probs", None)
+
+                        if ref_log_probs is not None:
+                            kld = compute_kl(
+                                log_probs=log_probs,
+                                ref_log_probs=ref_log_probs,
+                                kl_penalty=self.config.kl_penalty,
+                            )
+                            kl_loss = average_loss(kld, response_mask, mode=self.config.loss_avg_mode)
+                            loss = loss + kl_loss * self.config.kl_coef
+                            metrics["actor/kl_loss"] = kl_loss.detach().item()
+                            metrics["actor/kl_coef"] = self.config.kl_coef
+
+                    loss = loss * torch.sum(response_mask) * self.world_size / global_total_response_tokens
                     loss.backward()
 
                     batch_metrics = {

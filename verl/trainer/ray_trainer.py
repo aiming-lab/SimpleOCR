@@ -775,11 +775,11 @@ class RayPPOTrainer:
                         gamma=self.config.algorithm.gamma,
                         lam=self.config.algorithm.lam,
                     )
-                torch.save(batch, "debug_adv_branch.pt")
+                # torch.save(batch, "debug_adv_branch.pt")
                 if self.config.data.enable_dual_branch:
                     batch = merge_dual_branches(batch)
                 # torch.save(batch, "debug_adv_merged.pt")
-                # batch = torch.load("/home/yibop/ocr-unc/debug_adv_merged.pt", map_location="cpu", weights_only=False)
+                batch = torch.load("/home/yibop/ocr-unc/debug_adv_branch.pt", map_location="cpu", weights_only=False)
                 # update critic
                 if self.use_critic:
                     with timer("update_critic", timing_raw):
