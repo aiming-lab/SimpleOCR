@@ -439,8 +439,42 @@ class FSDPWorker(Worker):
 
         if self._use_optimizer_offload:  # avoid OOM in resuming
             offload_fsdp_optimizer(self.optimizer)
-    
+
     def _process_multi_modal_inputs(self, data: DataProto):
+        # single-branch
+        if "multi_modal_data" in data.non_tensor_batch:
+            self._process_single_branch_mm(data)
+            return
+
+        # dual-branch
+        if "multi_modal_data_A" in data.non_tensor_batch and "multi_modal_data_B" in data.non_tensor_batch:
+            data_A = DataProto(
+                non_tensor_batch={
+                    "multi_modal_data": data.non_tensor_batch["multi_modal_data_A"],
+                    "uid": data.non_tensor_batch.get("uid_A", data.non_tensor_batch.get("uid")),
+                    "branch": np.array(["A"] * len(data.non_tensor_batch["multi_modal_data_A"]), dtype=object),
+                },
+                meta_info=data.meta_info,
+            )
+            self._process_single_branch_mm(data_A)
+            data.non_tensor_batch["multi_modal_inputs_A"] = data_A.non_tensor_batch["multi_modal_inputs"]
+
+            data_B = DataProto(
+                non_tensor_batch={
+                    "multi_modal_data": data.non_tensor_batch["multi_modal_data_B"],
+                    "uid": data.non_tensor_batch.get("uid_B", data.non_tensor_batch.get("uid")),
+                    "branch": np.array(["B"] * len(data.non_tensor_batch["multi_modal_data_B"]), dtype=object),
+                },
+                meta_info=data.meta_info,
+            )
+            self._process_single_branch_mm(data_B)
+            data.non_tensor_batch["multi_modal_inputs_B"] = data_B.non_tensor_batch["multi_modal_inputs"]
+
+            return
+        
+        return
+
+    def _process_single_branch_mm(self, data: DataProto):
         if "multi_modal_data" not in data.non_tensor_batch:
             return
 
