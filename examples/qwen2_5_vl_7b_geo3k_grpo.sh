@@ -12,6 +12,6 @@ LOG_FILE=${LOG_DIR}/qwen2_5_vl_3b_no_dual_branch_ding_debug_$(date +"%Y%m%d_%H%M
 CUDA_VISIBLE_DEVICES=4,5,6,7 python3 -m verl.trainer.main \
     config=examples/config.yaml \
     worker.actor.model.model_path=${MODEL_PATH} \
-    trainer.experiment_name=qwen2_5_vl_3b_dual_branch_ding_debug_new\
+    trainer.experiment_name=qwen2_5_vl_3b_dual_branch_ding\
     trainer.n_gpus_per_node=4 \
     2>&1 | tee -a ${LOG_FILE}

@@ -347,7 +347,6 @@ class DataParallelPPOActor(BasePPOActor):
                     bs = mini_batch.batch["response_mask_A"].size(0)
 
                     anneal_prob = 1.0 - max(0.0, 1.0 - (global_step / total_steps)) # Linear annealing sampler
-                    # anneal_prob = 1.0 
 
                     mini_branch_mask = torch.bernoulli(
                         torch.full((bs,), float(anneal_prob), device=device_for_mask)
@@ -408,7 +407,7 @@ class DataParallelPPOActor(BasePPOActor):
                         # ========== compute token-level visual uncertainty and token-wise entropy ==========
                         # use cross log probs (A prompt + B response) and B branch log probs (B prompt + B response) to compute visual uncertainty for branch B
                         visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_B_full_vocab, response_mask_B).detach()
-                        
+
                         H_branch_A = self._compute_token_entropy_from_logprobs(log_probs_A_full_vocab, mask=response_mask_A).detach() #[B, seq]
                         H_branch_B = self._compute_token_entropy_from_logprobs(log_probs_B_full_vocab, mask=response_mask_B).detach()
                         
@@ -436,7 +435,7 @@ class DataParallelPPOActor(BasePPOActor):
                             log_probs_A_full_vocab, log_probs_B_full_vocab,
                             cross_log_probs_full_vocab,
                         )
-                        del H_branch_A, H_branch_B, visual_uncertainty
+                        
                         torch.cuda.empty_cache()
 
                     pg_loss, pg_metrics = compute_policy_loss(
@@ -473,7 +472,7 @@ class DataParallelPPOActor(BasePPOActor):
                         metrics["actor/visual_uncertainty_mean"] = visual_uncertainty.mean().detach().item()
                         metrics["actor/token_entropy_A_mean"] = (H_branch_A * response_mask_A).sum().detach().item() / response_mask_A.sum().detach().item()
                         metrics["actor/token_entropy_B_mean"] = (H_branch_B * response_mask_B).sum().detach().item() / response_mask_B.sum().detach().item()
-
+                    del H_branch_A, H_branch_B, visual_uncertainty
                     batch_metrics = {
                         "actor/pg_loss": pg_loss.detach().item(),
                         "actor/pg_clipfrac_higher": pg_metrics["pg_clipfrac_higher"],
