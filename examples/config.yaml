@@ -1,6 +1,6 @@
 data:
-  train_files: /home/yibop/processed_datasets/merged/train_grpo.json
-  val_files: /home/yibop/processed_datasets/merged/id_test.json
+  train_files: /home/yibop/grpo_dataset/train_grpo.json
+  val_files: /home/yibop/grpo_dataset/id_test.json
   prompt_key: question
   answer_key: answer
   image_key: image_path
