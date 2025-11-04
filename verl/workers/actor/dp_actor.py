@@ -223,16 +223,6 @@ class DataParallelPPOActor(BasePPOActor):
         batch_A = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_A")}
         batch_B = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_B")}
 
-        # resp_len_B = batch_B["responses"].size(1)
-        # cross_batch = {
-        #     # take B prompt (all tokens except its response tail) + A response
-        #     "input_ids":       torch.cat([batch_B["input_ids"][:, :-resp_len_B], batch_A["responses"]], dim=-1),
-        #     "attention_mask":  torch.cat([batch_B["attention_mask"][:, :-resp_len_B], batch_A["response_mask"]], dim=-1),
-        #     "position_ids":    batch_B["position_ids"],
-        #     "responses":       batch_A["responses"],
-        #     "response_mask":   batch_A["response_mask"],
-        # }
-
         resp_len_A = batch_A["responses"].size(1)
         
         cross_batch = {
@@ -418,9 +408,7 @@ class DataParallelPPOActor(BasePPOActor):
                         # ========== compute token-level visual uncertainty and token-wise entropy ==========
                         # use cross log probs (A prompt + B response) and B branch log probs (B prompt + B response) to compute visual uncertainty for branch B
                         visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_B_full_vocab, response_mask_B).detach()
-                        # visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_A_full_vocab, response_mask_A).detach()
-                        # visual_uncertainty = visual_uncertainty.unsqueeze(-1)  # For sequence-level visual uncertainty, [B, 1]
-
+                        
                         H_branch_A = self._compute_token_entropy_from_logprobs(log_probs_A_full_vocab, mask=response_mask_A).detach() #[B, seq]
                         H_branch_B = self._compute_token_entropy_from_logprobs(log_probs_B_full_vocab, mask=response_mask_B).detach()
                         
