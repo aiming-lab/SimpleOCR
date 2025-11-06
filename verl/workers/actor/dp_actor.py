@@ -472,7 +472,7 @@ class DataParallelPPOActor(BasePPOActor):
                         metrics["actor/visual_uncertainty_mean"] = visual_uncertainty.mean().detach().item()
                         metrics["actor/token_entropy_A_mean"] = (H_branch_A * response_mask_A).sum().detach().item() / response_mask_A.sum().detach().item()
                         metrics["actor/token_entropy_B_mean"] = (H_branch_B * response_mask_B).sum().detach().item() / response_mask_B.sum().detach().item()
-                    del H_branch_A, H_branch_B, visual_uncertainty
+                        del H_branch_A, H_branch_B, visual_uncertainty
                     batch_metrics = {
                         "actor/pg_loss": pg_loss.detach().item(),
                         "actor/pg_clipfrac_higher": pg_metrics["pg_clipfrac_higher"],

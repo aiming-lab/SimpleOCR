@@ -38,6 +38,10 @@ worker:
     global_batch_size: 128  # equivalent to verl's actor.ppo_mini_batch_size
     micro_batch_size_per_device_for_update: 4  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
     micro_batch_size_per_device_for_experience: 8  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
+    visual_uncertainty_coef_alpha: 1.0
+    visual_uncertainty_coef_beta: 2.0
+
+
     max_grad_norm: 1.0
     padding_free: true
     dynamic_batching: false
