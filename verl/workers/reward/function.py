@@ -97,7 +97,6 @@ class SequentialFunctionRewardManager(FunctionRewardManager):
                     "response": response_str,
                     "response_length": cur_response_length,
                     "ground_truth": data.non_tensor_batch["ground_truth"][i],
-                    "question": data.non_tensor_batch["question"][i],
                     "dataset": data.non_tensor_batch["dataset"][i],
                 }
             )
@@ -126,6 +125,7 @@ class BatchFunctionRewardManager(FunctionRewardManager):
                     "response": response_str,
                     "response_length": cur_response_length,
                     "ground_truth": data.non_tensor_batch["ground_truth"][i],
+                    "dataset": data.non_tensor_batch["dataset"][i],
                 }
             )
 

@@ -778,13 +778,7 @@ class RayPPOTrainer:
 
                 if self.config.data.enable_dual_branch:
                     batch = merge_dual_branches(batch)
-                # batch = torch.load("/home/yibop/ocr-unc/debug_adv_merged.pt", map_location="cpu", weights_only=False)
 
-                # batch = DataProto.from_dict(
-                #     tensors={k[:-2]: v for k, v in batch.batch.items() if k.endswith("_A")},
-                #     non_tensors={k[:-2]: v for k, v in batch.non_tensor_batch.items() if k.endswith("_A")},
-                #     meta_info=batch.meta_info,
-                # )
                 # update critic
                 if self.use_critic:
                     with timer("update_critic", timing_raw):
