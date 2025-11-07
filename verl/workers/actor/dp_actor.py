@@ -429,7 +429,8 @@ class DataParallelPPOActor(BasePPOActor):
                         old_log_probs = torch.where(mask_exp, old_log_probs_A, old_log_probs_B)
                         advantages    = torch.where(mask_exp, advantages_A,    advantages_B)
                         response_mask = torch.where(mask_exp, response_mask_A, response_mask_B)
-                        ref_log_probs = torch.where(mask_exp, ref_log_probs_A, ref_log_probs_B)
+                        if ref_log_probs_A is not None and ref_log_probs_B is not None:
+                            ref_log_probs = torch.where(mask_exp, ref_log_probs_A, ref_log_probs_B)
 
                         del (
                             log_probs_A_full_vocab, log_probs_B_full_vocab,

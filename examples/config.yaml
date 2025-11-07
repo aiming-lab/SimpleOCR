@@ -19,13 +19,13 @@ data:
   min_pixels: 262144
   max_pixels: 2097152 # 4194304
   filter_overlong_prompts: true
-  enable_dual_branch: false
+  enable_dual_branch: true
   branch: B
 
 algorithm:
   adv_estimator: grpo
-  disable_kl: false
-  use_kl_loss: true
+  disable_kl: true
+  use_kl_loss: false
   kl_penalty: low_var_kl
   kl_coef: 1.0e-2
   online_filtering: false  # dapo filter groups
@@ -40,7 +40,7 @@ worker:
     micro_batch_size_per_device_for_experience: 8  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
     visual_uncertainty_coef_alpha: 1.0
     visual_uncertainty_coef_beta: 2.0
-    token_entropy_coef_alpha: 0.4
+    token_entropy_coef_alpha: 0.01
     token_entropy_coef_beta: 2.0
     max_grad_norm: 1.0
     padding_free: true
