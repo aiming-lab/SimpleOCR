@@ -267,7 +267,8 @@ class RLHFDataset(Dataset):
                 pil_img = image
             pil_img.load()
             # add text overlay
-            seed = int(example.get("id", 0))
+            # seed = int(example.get("id", 0))
+            seed = 42
             overlay_text_image = add_text_to_image(pil_img, f"Question: {text}", seed)
             processed_images.append(process_image(overlay_text_image, self.min_pixels, self.max_pixels))
 

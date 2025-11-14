@@ -224,7 +224,6 @@ class DataParallelPPOActor(BasePPOActor):
         batch_B = {k[:-2]: v for k, v in model_inputs.items() if k.endswith("_B")}
 
         resp_len_A = batch_A["responses"].size(1)
-        
         cross_batch = {
             # take A prompt (all tokens except its response tail) + B response
             "input_ids":       torch.cat([batch_A["input_ids"][:, :-resp_len_A], batch_B["responses"]], dim=-1),
@@ -234,7 +233,6 @@ class DataParallelPPOActor(BasePPOActor):
             "responses":       batch_B["responses"],
             "response_mask":   batch_B["response_mask"],
         }
-
 
         return self._forward_micro_batch(cross_batch, temperature=temperature, dual_mode=self.dual_mode)
 
@@ -402,11 +400,11 @@ class DataParallelPPOActor(BasePPOActor):
                         ref_log_probs_B = model_inputs_B.get("ref_log_probs", None)
 
                         # compute cross log probs (A prompt + B response)
-                        _, cross_log_probs_full_vocab = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
+                        # _, cross_log_probs_full_vocab = self._forward_micro_batch_cross_probs(model_inputs, temperature=temperature)
 
                         # ========== compute token-level visual uncertainty and token-wise entropy ==========
                         # use cross log probs (A prompt + B response) and B branch log probs (B prompt + B response) to compute visual uncertainty for branch B
-                        visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_B_full_vocab, response_mask_B).detach()
+                        # visual_uncertainty = self._compute_visual_uncertainty(cross_log_probs_full_vocab, log_probs_B_full_vocab, response_mask_B).detach()
 
                         H_branch_A = self._compute_token_entropy_from_logprobs(log_probs_A_full_vocab, mask=response_mask_A).detach() #[B, seq]
                         H_branch_B = self._compute_token_entropy_from_logprobs(log_probs_B_full_vocab, mask=response_mask_B).detach()
@@ -416,14 +414,19 @@ class DataParallelPPOActor(BasePPOActor):
                             H_branch_A.abs() / self.config.token_entropy_coef_beta,
                             self.config.token_entropy_coef_alpha * H_branch_A
                             )
-                        
+
                         advantages_B = advantages_B + torch.min(
-                            advantages_B.abs() / self.config.visual_uncertainty_coef_beta, 
-                            self.config.visual_uncertainty_coef_alpha * visual_uncertainty
-                            ) + torch.min(
                             H_branch_B.abs() / self.config.token_entropy_coef_beta,
                             self.config.token_entropy_coef_alpha * H_branch_B
                             )
+
+                        # advantages_B = advantages_B + torch.min(
+                        #     advantages_B.abs() / self.config.visual_uncertainty_coef_beta, 
+                        #     self.config.visual_uncertainty_coef_alpha * visual_uncertainty
+                        #     ) + torch.min(
+                        #     H_branch_B.abs() / self.config.token_entropy_coef_beta,
+                        #     self.config.token_entropy_coef_alpha * H_branch_B
+                        #     )
 
                         log_probs     = torch.where(mask_exp, log_probs_A,     log_probs_B)
                         old_log_probs = torch.where(mask_exp, old_log_probs_A, old_log_probs_B)
@@ -434,8 +437,9 @@ class DataParallelPPOActor(BasePPOActor):
 
                         del (
                             log_probs_A_full_vocab, log_probs_B_full_vocab,
-                            cross_log_probs_full_vocab,
+                            log_probs_A, log_probs_B,
                         )
+                        # del cross_log_probs_full_vocab
                         
                         torch.cuda.empty_cache()
 
@@ -470,10 +474,11 @@ class DataParallelPPOActor(BasePPOActor):
                     loss.backward()
 
                     if self.dual_mode:
-                        metrics["actor/visual_uncertainty_mean"] = visual_uncertainty.mean().detach().item()
+                        # metrics["actor/visual_uncertainty_mean"] = visual_uncertainty.mean().detach().item()
                         metrics["actor/token_entropy_A_mean"] = (H_branch_A * response_mask_A).sum().detach().item() / response_mask_A.sum().detach().item()
                         metrics["actor/token_entropy_B_mean"] = (H_branch_B * response_mask_B).sum().detach().item() / response_mask_B.sum().detach().item()
-                        del H_branch_A, H_branch_B, visual_uncertainty
+                        # del H_branch_A, H_branch_B, visual_uncertainty
+                        del H_branch_A, H_branch_B
                     batch_metrics = {
                         "actor/pg_loss": pg_loss.detach().item(),
                         "actor/pg_clipfrac_higher": pg_metrics["pg_clipfrac_higher"],

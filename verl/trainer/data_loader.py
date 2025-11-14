@@ -80,7 +80,7 @@ def create_dataloader(config: DataConfig, tokenizer: PreTrainedTokenizer, proces
         max_prompt_length=config.max_prompt_length,
         truncation="right",
         format_prompt=config.format_prompt,
-        branch=config.branch,
+        branch="A", # config.branch
         min_pixels=config.min_pixels,
         max_pixels=config.max_pixels,
         filter_overlong_prompts=config.filter_overlong_prompts,

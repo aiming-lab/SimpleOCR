@@ -1,0 +1,124 @@
+{
+  "total": 13080,
+  "correct": 5972,
+  "average_score": 0.4565749235474006,
+  "math_verify_count": 0,
+  "llm_count": 5972,
+  "by_dataset": {
+    "MathVision": {
+      "total": 3040,
+      "correct": 1005,
+      "average_score": 0.3305921052631579,
+      "accuracy": 0.3305921052631579
+    },
+    "MathVerse": {
+      "total": 3940,
+      "correct": 1655,
+      "average_score": 0.4200507614213198,
+      "accuracy": 0.4200507614213198
+    },
+    "OCRBench": {
+      "total": 1000,
+      "correct": 725,
+      "average_score": 0.725,
+      "accuracy": 0.725
+    },
+    "MathVista": {
+      "total": 1000,
+      "correct": 511,
+      "average_score": 0.511,
+      "accuracy": 0.511
+    },
+    "HallusionBench": {
+      "total": 951,
+      "correct": 440,
+      "average_score": 0.46267087276551,
+      "accuracy": 0.46267087276551
+    },
+    "WeMath": {
+      "total": 1740,
+      "correct": 966,
+      "average_score": 0.5551724137931034,
+      "accuracy": 0.5551724137931034
+    },
+    "geometry3k": {
+      "total": 601,
+      "correct": 228,
+      "average_score": 0.3793677204658902,
+      "accuracy": 0.3793677204658902
+    },
+    "k12-freeform": {
+      "total": 808,
+      "correct": 442,
+      "average_score": 0.5470297029702971,
+      "accuracy": 0.5470297029702971
+    }
+  },
+  "by_split": {
+    "ood_test": {
+      "total": 11671,
+      "correct": 5302,
+      "average_score": 0.45428840716305374,
+      "by_dataset": {
+        "MathVision": {
+          "total": 3040,
+          "correct": 1005,
+          "average_score": 0.3305921052631579,
+          "accuracy": 0.3305921052631579
+        },
+        "MathVerse": {
+          "total": 3940,
+          "correct": 1655,
+          "average_score": 0.4200507614213198,
+          "accuracy": 0.4200507614213198
+        },
+        "OCRBench": {
+          "total": 1000,
+          "correct": 725,
+          "average_score": 0.725,
+          "accuracy": 0.725
+        },
+        "MathVista": {
+          "total": 1000,
+          "correct": 511,
+          "average_score": 0.511,
+          "accuracy": 0.511
+        },
+        "HallusionBench": {
+          "total": 951,
+          "correct": 440,
+          "average_score": 0.46267087276551,
+          "accuracy": 0.46267087276551
+        },
+        "WeMath": {
+          "total": 1740,
+          "correct": 966,
+          "average_score": 0.5551724137931034,
+          "accuracy": 0.5551724137931034
+        }
+      },
+      "accuracy": 0.45428840716305374
+    },
+    "id_test": {
+      "total": 1409,
+      "correct": 670,
+      "average_score": 0.4755145493257629,
+      "by_dataset": {
+        "geometry3k": {
+          "total": 601,
+          "correct": 228,
+          "average_score": 0.3793677204658902,
+          "accuracy": 0.3793677204658902
+        },
+        "k12-freeform": {
+          "total": 808,
+          "correct": 442,
+          "average_score": 0.5470297029702971,
+          "accuracy": 0.5470297029702971
+        }
+      },
+      "accuracy": 0.4755145493257629
+    }
+  },
+  "accuracy": 0.4565749235474006
+}

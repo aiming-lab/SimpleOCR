@@ -16,7 +16,7 @@ import re
 from typing import Any
 from rapidfuzz.distance import Levenshtein
 from mathruler.grader import extract_boxed_content, grade_answer
-
+from math_verify import parse, verify
 
 def format_reward(response: str) -> float:
     pattern = re.compile(r"<think>.*</think>.*\\boxed\{.*\}.*", re.DOTALL)
@@ -27,7 +27,8 @@ def format_reward(response: str) -> float:
 def accuracy_reward(response: str, ground_truth: str) -> float:
     """Reward for exact match between predicted and ground-truth boxed answers."""
     answer = extract_boxed_content(response)
-    return 1.0 if grade_answer(answer, ground_truth) else 0.0
+    # return 1.0 if grade_answer(answer, ground_truth) else 0.0
+    return 1.0 if verify(answer, ground_truth) else 0.0
 
 
 def edit_distance_reward(response: str, ground_truth: str) -> float:
@@ -96,18 +97,19 @@ def compute_score(
         ground_truth = reward_input["ground_truth"]
 
         format_score = format_reward(response)
+        accuracy_score = accuracy_reward(response, ground_truth)
 
-        if dataset == "Geometry3K":
-            # strict match (no tolerance)
-            accuracy_score = accuracy_reward(response, ground_truth)
-        else:
-            # for non-Geometry datasets
-            if has_numeric_answer(ground_truth):
-                # apply numeric tolerance ±5%
-                accuracy_score = numeric_tolerance_reward(response, ground_truth, tol=0.05)
-            else:
-                # use edit distance for non-numeric responses
-                accuracy_score = edit_distance_reward(response, ground_truth)
+        # if dataset != "ChartQA" and dataset != "SP-DocVQA":
+        #     # strict match (no tolerance)
+        #     accuracy_score = accuracy_reward(response, ground_truth)
+        # else:
+        #     # for non-Geometry datasets
+        #     if has_numeric_answer(ground_truth):
+        #         # apply numeric tolerance ±5%
+        #         accuracy_score = numeric_tolerance_reward(response, ground_truth, tol=0.05)
+        #     else:
+        #         # use edit distance for non-numeric responses
+        #         accuracy_score = edit_distance_reward(response, ground_truth)
 
         overall = (1 - format_weight) * accuracy_score + format_weight * format_score
         scores.append(

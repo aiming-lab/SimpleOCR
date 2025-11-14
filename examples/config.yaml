@@ -1,6 +1,6 @@
 data:
-  train_files: /home/yibop/grpo_dataset/train_grpo.json
-  val_files: /home/yibop/grpo_dataset/id_test.json
+  train_files: /home/yibop/grpo_dataset/train_single_a.json
+  val_files: /home/yibop/grpo_dataset/validation.json
   prompt_key: question
   answer_key: answer
   image_key: image_path
@@ -9,10 +9,10 @@ data:
   video_fps: 2.0
   max_prompt_length: 3072
   max_response_length: 2048
-  rollout_batch_size: 512  # equivalent to verl's data.train_batch_size
+  rollout_batch_size: 256  # equivalent to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
   val_batch_size: 1024
-  format_prompt: /home/yibop/EasyR1/examples/format_prompt/math.jinja
+  format_prompt: /home/yibop/ocr-unc/examples/format_prompt/math_verify.jinja
   override_chat_template: null
   shuffle: true
   seed: 1
@@ -36,11 +36,11 @@ algorithm:
 worker:
   actor:
     global_batch_size: 128  # equivalent to verl's actor.ppo_mini_batch_size
-    micro_batch_size_per_device_for_update: 2  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
-    micro_batch_size_per_device_for_experience: 4  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
-    visual_uncertainty_coef_alpha: 1.0
+    micro_batch_size_per_device_for_update: 4  # equivalent to verl's actor.ppo_micro_batch_size_per_gpu
+    micro_batch_size_per_device_for_experience: 8  # equivalent to verl's rollout.log_prob_micro_batch_size_per_gpu
+    visual_uncertainty_coef_alpha: 0
     visual_uncertainty_coef_beta: 2.0
-    token_entropy_coef_alpha: 0.01
+    token_entropy_coef_alpha: 0
     token_entropy_coef_beta: 2.0
     max_grad_norm: 1.0
     padding_free: true
@@ -89,12 +89,12 @@ worker:
 
   reward:
     reward_type: batch
-    reward_function: ./examples/reward_function/math.py:compute_score
-    reward_function_kwargs: {format_weight: 0.1}
+    reward_function: ./examples/reward_function/math_verify_with_format.py:compute_score
+    # reward_function_kwargs: {format_weight: 0.1}
 
 trainer:
   total_epochs: 2
-  max_steps: null
+  max_steps: 200
   project_name: easy_r1
   experiment_name: qwen2_5_7b_math_grpo
   logger: ["console", "wandb"]
@@ -105,7 +105,7 @@ trainer:
   val_before_train: false
   val_only: false
   val_generations_to_log: 3
-  save_freq: 5  # -1 to disable
+  save_freq: 2  # -1 to disable
   save_limit: 3  # -1 to disable
   save_model_only: false
   save_checkpoint_path: null
