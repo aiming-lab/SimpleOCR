@@ -1,22 +1,15 @@
 # SimpleOCR: Visual Uncertainty-Aware Reinforcement Learning for Multimodal Reasoning
 
 [![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/XXXX.XXXXX)
-[![Data](https://img.shields.io/badge/🤗%20Data-HuggingFace-yellow)](https://huggingface.co/datasets/pybbb/simpleocr)
+[![Data](https://img.shields.io/badge/🤗%20Data-HuggingFace-yellow)](https://huggingface.co/datasets/simpleocr/simpleocr)
 [![GitHub](https://img.shields.io/github/stars/aiming-lab/SimpleOCR)](https://github.com/aiming-lab/SimpleOCR)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 This repository contains the official implementation of **SimpleOCR**, a novel approach for enhancing multimodal large language models through visual uncertainty-aware reinforcement learning.
 
-## 🔑 Key Features
-
-- **Dual-Branch Training**: Contrasts model behavior on original images vs. text-overlaid images
-- **Visual Uncertainty Quantification**: Token-level symmetric KL divergence to measure visual perception confidence
-- **Uncertainty-Aware Advantage Estimation**: Incorporates visual uncertainty into GRPO advantage function
-- **Built on EasyR1**: Efficient and scalable RL training framework
-
 ## 📊 Datasets
 
-All datasets are available on HuggingFace: [`pybbb/simpleocr`](https://huggingface.co/datasets/pybbb/simpleocr)
+All datasets are available on HuggingFace: [`simpleocr/simpleocr`](https://huggingface.co/datasets/simpleocr/simpleocr)
 
 | Config | Description |
 |--------|-------------|
@@ -113,22 +106,6 @@ SimpleOCR/
 │   ├── USAGE_GUIDE.md       # Detailed usage guide
 │   └── REPRODUCE.md         # Reproduce experiments
 └── METHOD_SECTION.md        # Technical details
-```
-
-## 🔧 Configuration
-
-Key configuration options in `examples/config.yaml`:
-
-```yaml
-data:
-  enable_dual_branch: true   # Enable dual-branch training
-  branch: B                  # Use text-overlaid images
-
-worker:
-  actor:
-    visual_uncertainty_coef_alpha: 1.0  # Enable uncertainty-aware training
-    visual_uncertainty_coef_beta: 2.0
-    token_entropy_coef_alpha: 0.01
 ```
 
 ## 📖 Documentation
