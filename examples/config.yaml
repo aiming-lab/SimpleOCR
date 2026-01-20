@@ -1,18 +1,19 @@
 data:
-  train_files: /home/yibop/grpo_dataset/train_single_a.json
-  val_files: /home/yibop/grpo_dataset/validation.json
+  # IMPORTANT: Update these paths to your dataset locations
+  train_files: ./data/train.json  # Training data JSON file
+  val_files: ./data/validation.json  # Validation data JSON file
   prompt_key: question
   answer_key: answer
   image_key: image_path
   video_key: videos
-  image_dir: /home/yibop/data
+  image_dir: ./data/images  # Root directory containing images
   video_fps: 2.0
   max_prompt_length: 3072
   max_response_length: 2048
-  rollout_batch_size: 256  # equivalent to verl's data.train_batch_size
+  rollout_batch_size: 128  # equivalent to verl's data.train_batch_size
   mini_rollout_batch_size: null  # equivalent to verl's data.gen_batch_size
   val_batch_size: 1024
-  format_prompt: /home/yibop/ocr-unc/examples/format_prompt/math_verify.jinja
+  format_prompt: ./examples/format_prompt/math.jinja
   override_chat_template: null
   shuffle: true
   seed: 1
@@ -65,7 +66,7 @@ worker:
       offload_optimizer: false  # true: more CPU memory; false: more GPU memory
 
   rollout:
-    n: 5
+    n: 6
     temperature: 1.0
     top_p: 1.0
     limit_images: 0
@@ -89,8 +90,8 @@ worker:
 
   reward:
     reward_type: batch
-    reward_function: ./examples/reward_function/math_verify_with_format.py:compute_score
-    # reward_function_kwargs: {format_weight: 0.1}
+    reward_function: ./examples/reward_function/math.py:compute_score
+    reward_function_kwargs: {format_weight: 0.33}
 
 trainer:
   total_epochs: 2
@@ -106,7 +107,7 @@ trainer:
   val_only: false
   val_generations_to_log: 3
   save_freq: 2  # -1 to disable
-  save_limit: 3  # -1 to disable
+  save_limit: 2  # -1 to disable
   save_model_only: false
   save_checkpoint_path: null
   load_checkpoint_path: null
