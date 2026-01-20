@@ -136,7 +136,7 @@ def apply_kl_penalty(data: DataProto, kl_ctrl: KLController, kl_penalty="kl"):
 
 def compute_advantage(data: DataProto, adv_estimator: AdvantageEstimator, gamma: float = 1.0, lam: float = 1.0):
     """Compute advantage estimates for policy optimization."""
-    index = data.non_tensor_batch["uid"] + "_" + data.non_tensor_batch["branch"] if "branch" in data.non_tensor_batch else data.non_tensor_batch["uid"]
+    index = data.non_tensor_batch["uid"]
     adv_inputs = {
         "token_level_rewards": data.batch["token_level_rewards"],
         "response_mask": data.batch["response_mask"],
@@ -776,8 +776,8 @@ class RayPPOTrainer:
                         lam=self.config.algorithm.lam,
                     )
 
-                if self.config.data.enable_dual_branch:
-                    batch = merge_dual_branches(batch)
+                # if self.config.data.enable_dual_branch:
+                #     batch = merge_dual_branches(batch)
 
                 # update critic
                 if self.use_critic:
