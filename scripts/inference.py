@@ -396,7 +396,9 @@ def main():
         print(f"Test data file does not exist: {args.test_data}")
         sys.exit(1)
     
-    os.makedirs(os.path.dirname(args.output_file), exist_ok=True)
+    output_dir = os.path.dirname(args.output_file)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
     
     start_idx = 0
     interrupted_file = args.output_file.replace('.jsonl', '_interrupted.jsonl')

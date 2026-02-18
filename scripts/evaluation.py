@@ -70,53 +70,6 @@ except ImportError:
     print("Install: pip install math-verify")
 
 
-def get_most_similar(prediction, choices):
-    """Use Levenshtein distance to find most similar choice."""
-    distances = [levenshtein_distance(str(prediction), str(choice)) for choice in choices]
-    return choices[distances.index(min(distances))]
-
-
-def normalize_answer(extraction, question_type="", answer_type="", choices=None, precision=2):
-    """Normalize extracted answer following MathVista official logic."""
-    if not extraction or extraction == "":
-        return None
-        
-    extraction = str(extraction).strip()
-    
-    if question_type == 'multi_choice' and choices:
-        letter_match = re.findall(r'\(?([a-zA-Z])\)?', extraction)
-        if letter_match:
-            extraction = letter_match[0].upper()
-        
-        sequential_chars = [chr(ord('A') + i) for i in range(len(choices))]
-        
-        if extraction in sequential_chars:
-            return choices[sequential_chars.index(extraction)]
-        
-        if extraction in choices:
-            return extraction
-        
-        return get_most_similar(extraction, choices)
-    
-    if answer_type == 'integer':
-        try:
-            return str(int(float(extraction)))
-        except:
-            return None
-    
-    if answer_type == 'float':
-        try:
-            return str(round(float(extraction), int(precision)))
-        except:
-            return None
-    
-    if answer_type == 'list':
-        try:
-            return str(extraction)
-        except:
-            return None
-    
-    return extraction
 
 
 class SimpleEvaluator:
@@ -815,6 +768,12 @@ def main():
         print("Eval Mode: only_llm_judge")
     print(f"{'='*70}\n")
     
+    # Fall back to environment variables if CLI args are not provided
+    azure_api_key     = args.azure_api_key     or os.environ.get('AZURE_OPENAI_API_KEY')
+    azure_endpoint    = args.azure_endpoint    or os.environ.get('AZURE_OPENAI_ENDPOINT')
+    azure_api_version = args.azure_api_version or os.environ.get('AZURE_OPENAI_API_VERSION')
+    azure_deployment  = args.azure_deployment  or os.environ.get('AZURE_OPENAI_DEPLOYMENT')
+
     start_idx = 0
     interrupted_file = args.output_path.replace('.jsonl', '_interrupted.jsonl')
     
@@ -825,29 +784,24 @@ def main():
                 processed_results = [json.loads(line) for line in f if line.strip()]
                 start_idx = len(processed_results)
             
-            print(f"Already evaluated: {start_idx} items")
-            response = input("Continue? (y/n): ").lower()
-            if response != 'y':
-                start_idx = 0
-                processed_results = []
-                os.remove(interrupted_file)
+            print(f"Already evaluated: {start_idx} items, auto-resuming...")
         except Exception as e:
             print(f"Warning: Failed to read interrupted file: {e}")
             start_idx = 0
             processed_results = []
     
     try:
-        model_name = args.azure_deployment if args.use_azure and args.azure_deployment else args.evaluator_model
+        model_name = azure_deployment if args.use_azure and azure_deployment else args.evaluator_model
         
         evaluator = VisionEvaluator(
             evaluator_model=model_name,
             use_vllm=args.use_vllm,
             use_azure=args.use_azure,
             api_base=args.api_base,
-            azure_api_key=args.azure_api_key,
-            azure_endpoint=args.azure_endpoint,
-            azure_api_version=args.azure_api_version,
-            azure_deployment=args.azure_deployment,
+            azure_api_key=azure_api_key,
+            azure_endpoint=azure_endpoint,
+            azure_api_version=azure_api_version,
+            azure_deployment=azure_deployment,
             only_llm_judge=args.only_llm_judge,
             max_workers=args.max_workers
         )
