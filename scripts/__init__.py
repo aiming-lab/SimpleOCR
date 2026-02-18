@@ -1,1 +1,0 @@
-# SimpleOCR scripts
