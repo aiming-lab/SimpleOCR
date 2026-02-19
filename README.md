@@ -37,21 +37,33 @@ ds_test = load_dataset("simpleocr/simpleocr", "test-ood", split="train")
 
 ### Installation
 
+SimpleOCR is built on top of [EasyR1](https://github.com/hiyouga/EasyR1). We recommend setting up the EasyR1 environment first, then installing SimpleOCR on top.
+
+**Option 1: Docker (recommended)**
+
+Use the pre-built EasyR1 Docker image, which includes PyTorch, flash-attn, and vLLM:
+
+```bash
+docker pull hiyouga/verl:ngc-th2.8.0-cu12.9-vllm0.11.0
+docker run -it --ipc=host --gpus=all hiyouga/verl:ngc-th2.8.0-cu12.9-vllm0.11.0
+```
+
+Then inside the container:
+
 ```bash
 git clone https://github.com/aiming-lab/SimpleOCR.git
 cd SimpleOCR
-conda create -n simpleocr python=3.10 -y
-conda activate simpleocr
-conda install -y pytorch pytorch-cuda=12.1 -c pytorch -c nvidia
-python -c "import torch; print(torch.__version__, torch.cuda.is_available())"
-
 pip install -e .
 ```
 
-Or use Docker:
+**Option 2: pip**
+
+Follow the [EasyR1 installation guide](https://github.com/hiyouga/EasyR1) to set up the base environment (Python 3.10+, PyTorch, flash-attn, vLLM), then:
+
 ```bash
-docker pull hiyouga/verl:ngc-th2.7.1-cu12.6-vllm0.10.0
-docker run -it --ipc=host --gpus=all hiyouga/verl:ngc-th2.7.1-cu12.6-vllm0.10.0
+git clone https://github.com/aiming-lab/SimpleOCR.git
+cd SimpleOCR
+pip install -e .
 ```
 
 ### Prepare Training Data
