@@ -285,22 +285,11 @@ SimpleOCR/
 If you use this code, please cite:
 
 ```bibtex
-@misc{simpleocr2025,
-  title  = {SimpleOCR: Visual Uncertainty-Aware Reinforcement Learning for Multimodal Reasoning},
+@misc{simpleocr2026,
+  title  = {SimpleOCR: Rendering Visualized Questions to Teach MLLMs to Read},
   author = {Your Name},
-  year   = {2025},
+  year   = {2026},
   url    = {https://github.com/aiming-lab/SimpleOCR}
-}
-```
-
-This project is built on [EasyR1](https://github.com/hiyouga/EasyR1) and [veRL](https://github.com/volcengine/verl). Please also cite:
-
-```bibtex
-@misc{zheng2025easyr1,
-  title        = {EasyR1: An Efficient, Scalable, Multi-Modality RL Training Framework},
-  author       = {Yaowei Zheng, Junting Lu, Shenzhi Wang, Zhangchi Feng, Dongdong Kuang, Yuwen Xiong},
-  howpublished = {\url{https://github.com/hiyouga/EasyR1}},
-  year         = {2025}
 }
 ```
 
@@ -310,4 +299,4 @@ This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENS
 
 ## 🙏 Acknowledgments
 
-We thank the authors of EasyR1 and veRL for providing the high-performance RL training framework.
+We thank the authors of [EasyR1](https://github.com/hiyouga/EasyR1) and [veRL](https://github.com/volcengine/verl) for providing the RL training framework.
