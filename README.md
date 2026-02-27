@@ -1,6 +1,6 @@
 # SimpleOCR: Visual Uncertainty-Aware Reinforcement Learning for Multimodal Reasoning
 
-[![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/XXXX.XXXXX)
+[![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/2602.22426)
 [![Data](https://img.shields.io/badge/🤗%20Data-HuggingFace-yellow)](https://huggingface.co/datasets/simpleocr/simpleocr)
 [![GitHub](https://img.shields.io/github/stars/aiming-lab/SimpleOCR)](https://github.com/aiming-lab/SimpleOCR)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
@@ -285,11 +285,11 @@ SimpleOCR/
 If you use this code, please cite:
 
 ```bibtex
-@misc{simpleocr2026,
-  title  = {SimpleOCR: Rendering Visualized Questions to Teach MLLMs to Read},
-  author = {Your Name},
-  year   = {2026},
-  url    = {https://github.com/aiming-lab/SimpleOCR}
+@article{peng2026simpleocr,
+  title={SimpleOCR: Rendering Visualized Questions to Teach MLLMs to Read},
+  author={Peng, Yibo and Xia, Peng and Zhong, Ding and Zeng, Kaide and Han, Siwei and Zhou, Yiyang and Liu, Jiaqi and Zhang, Ruiyi and Yao, Huaxiu},
+  journal={arXiv preprint arXiv:2602.22426},
+  year={2026}
 }
 ```
 
