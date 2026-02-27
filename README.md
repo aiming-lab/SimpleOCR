@@ -1,4 +1,4 @@
-# SimpleOCR: Visual Uncertainty-Aware Reinforcement Learning for Multimodal Reasoning
+# SimpleOCR: Rendering Visualized Questions to Teach MLLMs to Read
 
 [![Paper](https://img.shields.io/badge/Paper-arXiv-red)](https://arxiv.org/abs/2602.22426)
 [![Data](https://img.shields.io/badge/🤗%20Data-HuggingFace-yellow)](https://huggingface.co/datasets/simpleocr/simpleocr)
